@@ -1,0 +1,23 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAdmin() {
+      return request.auth != null &&
+             request.auth.token.email in [
+               "admin@example.com",
+               "you@company.com"
+             ];
+    }
+
+    match /leads/{phoneId} {
+      allow create: if request.auth == null
+        && !exists(/databases/$(database)/documents/leads/$(phoneId))
+        && request.resource.data.phone_e164 == phoneId
+        && request.resource.data.name is string
+        && request.resource.data.phone_raw is string;
+
+      allow read, list, update, delete: if isAdmin();
+    }
+  }
+}

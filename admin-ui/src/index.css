@@ -1,0 +1,232 @@
+/* ===== Reset & Theme ===== */
+:root {
+  --bg: #0b0d12;
+  --panel: #11151b;
+  --card: #151a21;
+  --muted: #8b95a7;
+  --text: #e8edf5;
+  --border: #232a33;
+  --accent: #7c9cff;
+  --accent-2: #56d364;
+  --chip: #1e2430;
+  --danger: #ff6363;
+  --warning: #ffb020;
+}
+
+* {
+  box-sizing: border-box;
+}
+html,
+body,
+#root {
+  height: 100%;
+}
+body {
+  margin: 0;
+  background: radial-gradient(1200px 600px at 20% -20%, #162032 0%, transparent 60%), radial-gradient(1000px 500px at 120% 10%, #1b2231 0%, transparent 55%), var(--bg);
+  color: var(--text);
+  font: 14px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  letter-spacing: 0.2px;
+}
+
+/* ===== Layout ===== */
+.container {
+  max-width: 1200px;
+  margin: 32px auto;
+  padding: 0 20px;
+}
+.header {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.h1 {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+.sub {
+  color: var(--muted);
+}
+.card {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 40%), var(--card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+}
+
+/* ===== Toolbar / Filters ===== */
+.toolbar {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr)) auto;
+  gap: 10px;
+  padding: 14px;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(180deg, rgba(124, 156, 255, 0.08), transparent 90%), var(--panel);
+}
+.input,
+.select {
+  width: 100%;
+  padding: 10px 12px;
+  color: var(--text);
+  background: #0f141b;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.input::placeholder {
+  color: #647083;
+}
+.input:focus,
+.select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(124, 156, 255, 0.16);
+}
+.btns {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.btn {
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  background: #121821;
+  color: var(--text);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: transform 0.05s ease, background 0.2s, border-color 0.2s;
+}
+.btn:hover {
+  background: #171e28;
+}
+.btn:active {
+  transform: translateY(1px);
+}
+
+.btn-primary {
+  background: linear-gradient(180deg, rgba(124, 156, 255, 0.25), rgba(124, 156, 255, 0.1));
+  border-color: #2b3960;
+}
+.btn-primary:hover {
+  background: linear-gradient(180deg, rgba(124, 156, 255, 0.35), rgba(124, 156, 255, 0.12));
+}
+.btn-dl {
+  background: linear-gradient(180deg, rgba(86, 211, 100, 0.25), rgba(86, 211, 100, 0.08));
+  border-color: #204229;
+}
+.btn-dl:hover {
+  background: linear-gradient(180deg, rgba(86, 211, 100, 0.35), rgba(86, 211, 100, 0.1));
+}
+
+/* ===== Table ===== */
+.table-wrap {
+  overflow: auto;
+}
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 980px;
+}
+.table th,
+.table td {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+.table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: linear-gradient(180deg, #121824, #0f131d);
+  color: #b9c3d6;
+  font-weight: 600;
+  font-size: 13px;
+}
+.table tbody tr:hover {
+  background: rgba(124, 156, 255, 0.06);
+}
+.table .fit {
+  width: 40px;
+}
+
+/* Badges & chips */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  background: var(--chip);
+  color: #cfe0ff;
+  border: 1px solid #2a3240;
+}
+.chip {
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: #0e131b;
+  border: 1px solid var(--border);
+  color: #9fb2c9;
+  font-size: 12px;
+}
+.kicker {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* UA label */
+.ua {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.ua .platform {
+  color: #cfe0ff;
+}
+.ua .browser {
+  color: #c8f3cf;
+}
+
+/* ===== Pager ===== */
+.pager {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: flex-end;
+  padding: 12px 14px;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+}
+.pg-info {
+  color: var(--muted);
+}
+.pg-btn {
+  @apply .btn;
+} /* (실제 CSS: 아래 두 줄) */
+.pg-btn {
+  padding: 8px 12px;
+  border-radius: 10px;
+}
+
+/* ===== Helpers ===== */
+.muted {
+  color: var(--muted);
+}
+.right {
+  text-align: right;
+}
+.nowrap {
+  white-space: nowrap;
+}
+
+/* ===== Responsive ===== */
+@media (max-width: 1024px) {
+  .toolbar {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}

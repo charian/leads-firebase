@@ -1,0 +1,5 @@
+{
+  "scripts": {
+    "deploy:all": "cd admin-ui && npm run build && cd .. && rm -rf public/admin && mkdir -p public/admin && cp -r admin-ui/dist/* public/admin && firebase deploy --only hosting"
+  }
+}

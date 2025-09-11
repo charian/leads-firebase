@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Lead Capture</title>
+    <style>
+      body {
+        max-width: 720px;
+        margin: 40px auto;
+        font-family: system-ui, sans-serif;
+      }
+      form {
+        display: grid;
+        gap: 12px;
+      }
+      input,
+      button {
+        padding: 10px;
+        font-size: 16px;
+      }
+      .note {
+        color: #666;
+        font-size: 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>신청하기</h1>
+    <form id="leadForm">
+      <input name="name" placeholder="이름" required />
+      <input name="phone" placeholder="전화번호(숫자만)" required />
+      <button type="submit">제출</button>
+      <div class="note">제출 즉시 서버로 저장됩니다. 동일 번호는 중복 저장되지 않습니다.</div>
+    </form>
+
+    <script type="module">
+      import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+      import { getFirestore, doc, setDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+      // 1) 프로젝트 설정값으로 교체
+      const firebaseConfig = {
+        apiKey: "AIzaSyB8ZL2jGATHOaW_SlnM_BsUzkl8iNncAxY",
+        authDomain: "planplant-database.firebaseapp.com",
+        projectId: "planplant-database",
+      };
+      const app = initializeApp(firebaseConfig);
+      const db = getFirestore(app, "customer-database");
+
+      // 2) UTM & referrer 수집
+      const qs = new URLSearchParams(location.search);
+      const utm = (k) => qs.get(k) || "";
+      const referrer = document.referrer || "";
+
+      // 3) 한국 번호 간이 정규화(+82) — 국제 서비스면 libphonenumber-js 권장
+      function normalizePhoneKR(raw) {
+        let digits = (raw || "").replace(/\D/g, "");
+        if (digits.startsWith("0")) digits = digits.slice(1);
+        if (!digits.startsWith("82")) digits = "82" + digits;
+        return "+" + digits;
+      }
+
+      // 4) 제출 처리
+      document.getElementById("leadForm").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const form = e.currentTarget;
+        const name = form.name.value.trim();
+        const phoneRaw = form.phone.value.trim();
+        const phoneE164 = normalizePhoneKR(phoneRaw);
+
+        const payload = {
+          name,
+          phone_raw: phoneRaw,
+          phone_e164: phoneE164,
+          referrer,
+          utm_source: utm("utm_source"),
+          utm_medium: utm("utm_medium"),
+          utm_campaign: utm("utm_campaign"),
+          utm_content: utm("utm_content"),
+          utm_term: utm("utm_term"),
+          page: location.pathname,
+          userAgent: navigator.userAgent,
+          createdAt: serverTimestamp(),
+        };
+
+        try {
+          // 문서ID = phone_e164 (존재 시 update가 필요하지만, public update는 rules에서 불허 → 거절됨)
+          await setDoc(doc(db, "leads", phoneE164), payload);
+          alert("접수되었습니다!");
+          form.reset();
+        } catch (err) {
+          const msg = String(err);
+          // 권한오류면 대부분 "이미 등록된 번호" 케이스
+          if (msg.includes("Missing or insufficient permissions")) {
+            alert("이미 등록된 전화번호입니다.");
+          } else {
+            console.error(err);
+            alert("제출 중 오류가 발생했습니다.");
+          }
+        }
+      });
+    </script>
+  </body>
+</html>
