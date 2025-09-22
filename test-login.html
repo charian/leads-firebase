@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Firebase Auth Test</title>
+  </head>
+  <body>
+    <h1>Firebase Auth Test</h1>
+    <button id="login-button">Test Google Login</button>
+
+    <script type="module">
+      // Firebase SDK를 직접 import합니다.
+      import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+      import { getAuth, GoogleAuthProvider, signInWithPopup } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+
+      // 본인의 Firebase 설정을 그대로 사용합니다.
+      const firebaseConfig = {
+        apiKey: "AIzaSy8BZL2Jg4THOwAl_SLnmBsuzk18knAcxY",
+        authDomain: "planplant-database.firebaseapp.com",
+        projectId: "planplant-database",
+        storageBucket: "planplant-database.appspot.com",
+        messagingSenderId: "1099168071504",
+        appId: "1:1099168071504:web:45666f62043793c6ddcbc655",
+        measurementId: "G-M21JKY30S8",
+      };
+
+      const app = initializeApp(firebaseConfig);
+      const auth = getAuth(app);
+      const provider = new GoogleAuthProvider();
+
+      // 버튼 클릭 시 로그인 함수를 실행합니다.
+      document.getElementById("login-button").addEventListener("click", () => {
+        console.log("Login button clicked...");
+        signInWithPopup(auth, provider)
+          .then((result) => {
+            console.log("Login successful!", result.user);
+            alert("로그인 성공: " + result.user.email);
+          })
+          .catch((error) => {
+            console.error("Login failed!", error);
+            alert("로그인 실패! Code: " + error.code + "\nMessage: " + error.message);
+          });
+      });
+    </script>
+  </body>
+</html>

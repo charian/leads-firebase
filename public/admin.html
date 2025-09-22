@@ -1,428 +1,184 @@
-<!DOCTYPE html>
-<html lang="ko">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>기획공장 Admin</title>
-    <style>
-      body {
-        max-width: 1200px;
-        margin: 20px auto;
-        font-family: system-ui, sans-serif;
-      }
-      .toolbar {
-        display: grid;
-        grid-template-columns: 180px 1fr 1fr 1fr 140px auto;
-        gap: 8px;
-        margin: 12px 0;
-      }
-      input,
-      select,
-      button {
-        padding: 8px;
-        font-size: 14px;
-      }
-      table {
-        width: 100%;
-        border-collapse: collapse;
-      }
-      th,
-      td {
-        text-align: left;
-        border-bottom: 1px solid #ddd;
-        padding: 8px;
-        font-size: 14px;
-      }
-      th:first-child,
-      td:first-child {
-        width: 36px;
-      }
-      .muted {
-        color: #666;
-        font-size: 13px;
-      }
-      .pager {
-        display: flex;
-        gap: 8px;
-        align-items: center;
-        justify-content: flex-end;
-        margin-top: 10px;
-      }
-      .pager button {
-        padding: 6px 10px;
-      }
-      .right {
-        text-align: right;
-      }
-    </style>
-  </head>
-  <body>
-    <h2>기획공장 Admin</h2>
-    <div id="auth"></div>
+// functions/index.js
+// Firebase Functions v2 (HTTPS)
 
-    <div id="panel" style="display: none">
-      <div class="toolbar">
-        <select id="f_dl">
-          <option value="no">다운로드 없는 것 (기본)</option>
-          <option value="all">전체</option>
-        </select>
-        <input id="f_name" placeholder="이름" />
-        <input id="f_phone" placeholder="전화(검색)" />
-        <input id="f_source" placeholder="utm_source" />
-        <select id="f_period">
-          <option value="">period 전체</option>
-          <option value="오전">오전</option>
-          <option value="오후">오후</option>
-        </select>
-        <div class="right">
-          <button id="btnLoad">조회</button>
-          <button id="btnCsv">다운로드(CSV)</button>
-        </div>
-      </div>
+const { onRequest, onCall, HttpsError } = require("firebase-functions/v2/https");
+const { setGlobalOptions } = require("firebase-functions/v2");
+const admin = require("firebase-admin");
+const { getFirestore, FieldValue } = require("firebase-admin/firestore");
 
-      <div class="muted">표시는 최신순 / CSV는 선택 행만 / 전체선택은 현재 필터 결과 전체</div>
+/* ===== Global options ===== */
+setGlobalOptions({ region: "asia-northeast3" });
 
-      <table id="grid">
-        <thead>
-          <tr>
-            <th><input type="checkbox" id="chkAll" /></th>
-            <th>name</th>
-            <th>phone_e164</th>
-            <th>referrer</th>
-            <th>utm_source</th>
-            <th>utm_medium</th>
-            <th>utm_campaign</th>
-            <th>page</th>
-            <th>location</th>
-            <th>period</th>
-            <th>Platform</th>
-            <th>Browser</th>
-            <th>createdAt (KST)</th>
-            <th>download</th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      </table>
+/* ===== Admin SDK ===== */
+admin.initializeApp();
 
-      <div class="pager">
-        <span id="pgInfo" class="muted"></span>
-        <div style="flex: 1"></div>
-        <button id="prevPg">이전</button>
-        <button id="nextPg">다음</button>
-      </div>
-    </div>
+/* ===== Constants ===== */
+const DB_NAME = "customer-database";   // 보조 Firestore DB ID
+const LEADS = "leads";
 
-    <script>
-      function toDate(val) {
-        if (val?.toDate) return val.toDate();
-        if (typeof val === "string") return new Date(val);
-        if (val instanceof Date) return val;
-        if (typeof val === "number") return new Date(val);
-        return null;
-      }
-      function formatKST(createdAt) {
-        const d = toDate(createdAt);
-        if (!d || isNaN(d)) return { date: "-", time: "-", period: "-", kst: null };
-        const k = new Date(d.getTime() + 9 * 60 * 60 * 1000);
-        const y = k.getFullYear(),
-          m = k.getMonth() + 1,
-          dd = k.getDate();
-        const mm = String(k.getMinutes()).padStart(2, "0");
-        const h24 = k.getHours(),
-          period = h24 < 12 ? "오전" : "오후",
-          h12 = h24 % 12 || 12;
-        return { date: `${y}년 ${m}월 ${dd}일`, time: `${period} ${h12}시 ${mm}분`, period, kst: k };
-      }
-      function formatKSTCompact(createdAt) {
-        const { kst } = formatKST(createdAt);
-        if (!kst) return "";
-        const y = kst.getFullYear(),
-          m = String(kst.getMonth() + 1).padStart(2, "0"),
-          d = String(kst.getDate()).padStart(2, "0"),
-          hh = String(kst.getHours()).padStart(2, "0"),
-          mm = String(kst.getMinutes()).padStart(2, "0");
-        return `${y}-${m}-${d} ${hh}:${mm}`;
-      }
-      function esc(v) {
-        return String(v ?? "")
-          .replaceAll("&", "&amp;")
-          .replaceAll("<", "&lt;")
-          .replaceAll(">", "&gt;")
-          .replaceAll('"', "&quot;")
-          .replaceAll("'", "&#39;");
-      }
+// 허용 Origin (정확일치 + 패턴)
+const ALLOWED_ORIGINS = [
+  "https://holistic-learning-739071.framer.app",
+  "https://urology01.planplant.io",
+  "http://localhost:5173",
+];
+const ALLOWED_PATTERNS = [
+  /^https:\/\/urology\d+\.planplant\.io$/,
+];
 
-      // --- 간단 UA 파서 ---
-      function parseUA(ua) {
-        if (!ua) return { platform: "-", browser: "-" };
-        let platform = "-",
-          browser = "-";
-        if (/Macintosh/i.test(ua)) {
-          const m = /Mac OS X ([\d_]+)/i.exec(ua);
-          platform = "PC (Mac OS X " + (m ? m[1].replace(/_/g, ".") : ")");
-        } else if (/Windows NT/i.test(ua)) {
-          const w = /Windows NT ([\d.]+)/i.exec(ua);
-          platform = "PC (Windows " + (w ? w[1] : "") + ")";
-        } else if (/Android/i.test(ua)) {
-          platform = "Android";
-        } else if (/iPhone|iPad/i.test(ua)) {
-          platform = "iOS";
-        }
-        if (/Chrome\//i.test(ua)) {
-          const c = /Chrome\/([\d.]+)/i.exec(ua);
-          browser = "Chrome" + (c ? " " + c[1] : "");
-        } else if (/Safari\//i.test(ua)) {
-          browser = "Safari";
-        } else if (/Firefox\//i.test(ua)) {
-          browser = "Firefox";
-        }
-        return { platform, browser };
-      }
-    </script>
+/* ===== Helpers ===== */
+function isAllowedOrigin(origin) {
+  if (!origin) return false;
+  if (ALLOWED_ORIGINS.includes(origin)) return true;
+  return ALLOWED_PATTERNS.some((re) => re.test(origin));
+}
 
-    <script type="module">
-      import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-      import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-      import { getFirestore, collection, getDocs, query, orderBy, limit, writeBatch, doc, increment } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+// 프리플라이트/본요청 공통 CORS 세팅
+function setCors(req, res) {
+  const origin = req.headers.origin || "";
+  const reqHeaders = req.headers["access-control-request-headers"] || "Content-Type";
+  const allowed = isAllowedOrigin(origin);
 
-      const ALLOWED_ADMINS = ["angdry@planplant.io"],
-        PAGE_SIZE = 50;
-      const firebaseConfig = { apiKey: "AIzaSyB8ZL2jGATHOaW_SlnM_BsUzkl8iNncAxY", authDomain: "planplant-database.firebaseapp.com", projectId: "planplant-database" };
-      const app = initializeApp(firebaseConfig);
-      const auth = getAuth(app);
-      const db = getFirestore(app, "customer-database");
+  if (allowed) res.set("Access-Control-Allow-Origin", origin);
+  // 사전요청에 응답하기 위해 Vary를 정확히 설정
+  res.set("Vary", "Origin, Access-Control-Request-Headers");
+  res.set("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.set("Access-Control-Allow-Headers", reqHeaders);
 
-      const $auth = document.getElementById("auth"),
-        $panel = document.getElementById("panel"),
-        $tbody = document.querySelector("#grid tbody");
-      const $dl = document.getElementById("f_dl"),
-        $name = document.getElementById("f_name"),
-        $phone = document.getElementById("f_phone"),
-        $src = document.getElementById("f_source"),
-        $period = document.getElementById("f_period");
-      const $chkAll = document.getElementById("chkAll"),
-        $pgInfo = document.getElementById("pgInfo"),
-        $prevPg = document.getElementById("prevPg"),
-        $nextPg = document.getElementById("nextPg");
+  return allowed;
+}
 
-      let cacheRows = [],
-        selectedIds = new Set(),
-        currentPage = 1;
+// 한국 전화번호 → E.164(+82…) 간이 정규화
+function normalizePhoneKR(raw) {
+  if (!raw) return "";
+  let digits = String(raw).replace(/\D/g, "");
+  if (digits.startsWith("0")) digits = digits.slice(1);
+  if (!digits.startsWith("82")) digits = "82" + digits;
+  return "+" + digits;
+}
 
-      function uiLoggedOut() {
-        $panel.style.display = "none";
-        $auth.innerHTML = `<p>Google 계정으로 로그인하세요.</p><button id="btnLogin">Google 로그인</button>`;
-        document.getElementById("btnLogin").onclick = () => signInWithPopup(auth, new GoogleAuthProvider());
-      }
-      function uiNoAccess(e) {
-        $panel.style.display = "none";
-        $auth.innerHTML = `<p>접근 권한이 없습니다. (${e || "-"})</p><button id="btnLogout">로그아웃</button>`;
-        document.getElementById("btnLogout").onclick = () => signOut(auth);
-      }
-      function uiLoggedIn(e) {
-        $auth.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;"><div class="muted">${e}</div><button id="btnLogout">로그아웃</button></div>`;
-        document.getElementById("btnLogout").onclick = () => signOut(auth);
-        $panel.style.display = "";
-      }
-      onAuthStateChanged(auth, async (u) => {
-        if (!u) return uiLoggedOut();
-        const e = u.email || "";
-        if (!ALLOWED_ADMINS.includes(e)) return uiNoAccess(e);
-        uiLoggedIn(e);
-        await load();
-      });
+// 지역값 정규화
+function normalizeRegion(input) {
+  const v = String(input || "").trim();
+  if (v === "수도권" || v.toLowerCase() === "metro") return { ko: "수도권", key: "metro" };
+  if (v === "비수도권" || ["non_metro", "non-metro"].includes(v.toLowerCase()))
+    return { ko: "비수도권", key: "non_metro" };
+  return null;
+}
 
-      async function load() {
-        const q = query(collection(db, "leads"), orderBy("createdAt", "desc"), limit(2000));
-        const snap = await getDocs(q);
-        cacheRows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-        currentPage = 1;
-        render();
-      }
+/* ===== Firestore (secondary DB) =====
+   기본 DB를 쓰려면 다음으로 바꿔도 됨: getFirestore()
+*/
+const db = getFirestore(undefined, DB_NAME);
 
-      function getFilteredRows() {
-        let rows = [...cacheRows];
-        if ($dl.value === "no") rows = rows.filter((r) => !r.download || Number(r.download) === 0);
-        const nameKw = $name.value.trim().toLowerCase();
-        if (nameKw) rows = rows.filter((r) => (r.name || "").toLowerCase().includes(nameKw));
-        const phoneKw = $phone.value.replace(/\D/g, "");
-        if (phoneKw) rows = rows.filter((r) => (r.phone_e164 || "").replace(/\D/g, "").includes(phoneKw));
-        const srcKw = $src.value.trim().toLowerCase();
-        if (srcKw) rows = rows.filter((r) => (r.utm_source || "").toLowerCase().includes(srcKw));
-        const p = $period.value;
-        if (p) rows = rows.filter((r) => formatKST(r.createdAt).period === p);
-        return rows;
-      }
+/* ===== Handlers ===== */
 
-      function syncHeaderCheckbox(rows) {
-        if (rows.length === 0) {
-          $chkAll.checked = false;
-          $chkAll.indeterminate = false;
-          return;
-        }
-        const selected = rows.filter((r) => selectedIds.has(r.id)).length;
-        if (selected === 0) {
-          $chkAll.checked = false;
-          $chkAll.indeterminate = false;
-        } else if (selected === rows.length) {
-          $chkAll.checked = true;
-          $chkAll.indeterminate = false;
-        } else {
-          $chkAll.checked = false;
-          $chkAll.indeterminate = true;
-        }
-      }
+// 1) 헬스 체크
+exports.ping = onRequest((_, res) => res.status(200).send("pong"));
 
-      function render() {
-        const filtered = getFilteredRows(),
-          total = filtered.length,
-          totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-        if (currentPage > totalPages) currentPage = totalPages;
-        const start = (currentPage - 1) * PAGE_SIZE,
-          pageRows = filtered.slice(start, start + PAGE_SIZE);
+// 2) 리드 생성 (HTTP)
+exports.createLead = onRequest(async (req, res) => {
+  const allowed = setCors(req, res);
 
-        $tbody.innerHTML = pageRows
-          .map((r) => {
-            const { date, time, period } = formatKST(r.createdAt);
-            const { platform, browser } = parseUA(r.userAgent || "");
-            const checked = selectedIds.has(r.id) ? "checked" : "";
-            const dl = Number(r.download ?? 0);
-            return `<tr data-id="${esc(r.id)}">
-      <td><input type="checkbox" class="rowchk" data-id="${esc(r.id)}" ${checked} /></td>
-      <td>${esc(r.name)}</td>
-      <td>${esc(r.phone_e164)}</td>
-      <td>${esc(r.referrer)}</td>
-      <td>${esc(r.utm_source)}</td>
-      <td>${esc(r.utm_medium)}</td>
-      <td>${esc(r.utm_campaign)}</td>
-      <td>${esc(r.page)}</td>
-      <td>${esc(r.location)}</td>
-      <td>${esc(period)}</td>
-      <td>${esc(platform)}</td>
-      <td>${esc(browser)}</td>
-      <td>${esc(`${date} ${time}`)}</td>
-      <td>${dl}</td>
-    </tr>`;
-          })
-          .join("");
+  // Preflight
+  if (req.method === "OPTIONS") return res.status(204).send("");
 
-        $tbody.querySelectorAll(".rowchk").forEach((cb) => {
-          cb.addEventListener("change", (e) => {
-            const id = e.target.dataset.id;
-            if (e.target.checked) selectedIds.add(id);
-            else selectedIds.delete(id);
-            syncHeaderCheckbox(filtered);
-          });
-        });
+  // 브라우저 요청(Origin 존재)일 때만 화이트리스트 강제
+  if (req.headers.origin && !allowed) {
+    return res.status(403).json({ error: "Forbidden origin" });
+  }
 
-        syncHeaderCheckbox(filtered);
-        $pgInfo.textContent = `총 ${total}건 • ${currentPage}/${totalPages} 페이지 (50/page)`;
-        $prevPg.disabled = currentPage <= 1;
-        $nextPg.disabled = currentPage >= totalPages;
-      }
+  try {
+    if (req.method !== "POST") {
+      return res.status(405).json({ error: "Method Not Allowed" });
+    }
 
-      async function downloadCSV() {
-        if (selectedIds.size === 0) {
-          alert("다운로드할 행이 없습니다.");
-          return;
-        }
-        const selectedRows = cacheRows.filter((r) => selectedIds.has(r.id));
-        const headers = [
-          "name",
-          "phone_e164",
-          "referrer",
-          "utm_source",
-          "utm_medium",
-          "utm_campaign",
-          "page",
-          "location",
-          "period",
-          "Platform",
-          "Browser",
-          "createdAt(KST)",
-          "createdAt_compact",
-          "download",
-          "id",
-        ];
-        const lines = [headers.join(",")].concat(
-          selectedRows.map((r) => {
-            const { date, time, period } = formatKST(r.createdAt);
-            const { platform, browser } = parseUA(r.userAgent || "");
-            const row = {
-              name: r.name ?? "",
-              phone_e164: r.phone_e164 ?? "",
-              referrer: r.referrer ?? "",
-              utm_source: r.utm_source ?? "",
-              utm_medium: r.utm_medium ?? "",
-              utm_campaign: r.utm_campaign ?? "",
-              page: r.page ?? "",
-              location: r.location ?? "",
-              period,
-              Platform: platform,
-              Browser: browser,
-              "createdAt(KST)": `${date} ${time}`,
-              createdAt_compact: formatKSTCompact(r.createdAt),
-              download: Number(r.download ?? 0),
-              id: r.id,
-            };
-            return Object.values(row)
-              .map((v) => {
-                const s = String(v ?? "").replace(/"/g, '""');
-                return /[",\n]/.test(s) ? `"${s}"` : s;
-              })
-              .join(",");
-          })
-        );
-        const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8;" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `leads_selected_${new Date().toISOString().slice(0, 10)}.csv`;
-        a.click();
-        URL.revokeObjectURL(url);
+    const {
+      name,
+      phone,
+      region,
+      referrer,
+      utm_source,
+      utm_medium,
+      utm_campaign,
+      utm_content,
+      utm_term,
+      page,
+      userAgent,
+    } = req.body || {};
 
-        // download +1
-        try {
-          const batch = writeBatch(db);
-          selectedRows.forEach((r) => batch.update(doc(db, "leads", r.id), { download: increment(1) }));
-          await batch.commit();
-          const inc = new Set(selectedRows.map((r) => r.id));
-          cacheRows = cacheRows.map((r) => (inc.has(r.id) ? { ...r, download: Number(r.download ?? 0) + 1 } : r));
-          render();
-        } catch (e) {
-          console.error(e);
-          alert(`다운로드 카운트 업데이트 실패\ncode:${e?.code}\nmsg:${e?.message}`);
-        }
-      }
+    // 필수값
+    if (!name || !phone || !region) {
+      return res.status(400).json({ error: "name, phone, region are required" });
+    }
 
-      document.getElementById("btnLoad").onclick = load;
-      document.getElementById("btnCsv").onclick = downloadCSV;
-      [$dl, $name, $phone, $src, $period].forEach(($el) => {
-        $el.addEventListener("input", () => {
-          currentPage = 1;
-          render();
-        });
-        $el.addEventListener("change", () => {
-          currentPage = 1;
-          render();
-        });
-      });
-      $chkAll.addEventListener("change", (e) => {
-        const filtered = getFilteredRows();
-        if (e.target.checked) filtered.forEach((r) => selectedIds.add(r.id));
-        else filtered.forEach((r) => selectedIds.delete(r.id));
-        render();
-      });
-      $prevPg.addEventListener("click", () => {
-        if (currentPage > 1) {
-          currentPage--;
-          render();
-        }
-      });
-      $nextPg.addEventListener("click", () => {
-        currentPage++;
-        render();
-      });
-    </script>
-  </body>
-</html>
+    // 지역 검증
+    const regionInfo = normalizeRegion(region);
+    if (!regionInfo) {
+      return res.status(400).json({ error: "region must be 수도권 or 비수도권" });
+    }
+
+    // 전화번호 E.164 변환 + 포맷 검사
+    const phoneE164 = normalizePhoneKR(phone);
+    if (!/^\+\d{9,15}$/.test(phoneE164)) {
+      return res.status(400).json({ error: "invalid phone" });
+    }
+
+    // 중복 체크
+    const docRef = db.collection(LEADS).doc(phoneE164);
+    const snap = await docRef.get();
+    if (snap.exists) {
+      return res.status(409).json({ error: "duplicate phone", phone: phoneE164 });
+    }
+
+    // 저장
+    await docRef.set(
+      {
+        name: String(name).trim(),
+        phone_raw: String(phone).trim(),
+        phone_e164: phoneE164,
+        region_key: regionInfo.key, // 'metro' | 'non_metro'
+        region_ko: regionInfo.ko,   // '수도권' | '비수도권'
+        referrer: referrer || req.headers["referer"] || "",
+        utm_source: utm_source || "",
+        utm_medium: utm_medium || "",
+        utm_campaign: utm_campaign || "",
+        utm_content: utm_content || "",
+        utm_term: utm_term || "",
+        page: page || "",
+        userAgent: userAgent || req.headers["user-agent"] || "",
+        createdAt: FieldValue.serverTimestamp(),
+        download: 0,
+      },
+      { merge: false }
+    );
+
+    return res.status(201).json({ ok: true, id: phoneE164 });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "internal", detail: err.message });
+  }
+});
+
+// 3) 다운로드 카운트 증가 (Callable)
+// - Firebase Auth 필요
+// - req.data.ids: string[]
+exports.incrementDownloads = onCall(async (req) => {
+  const uid = req.auth?.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "signin required");
+
+  const ids = req.data?.ids;
+  if (!Array.isArray(ids) || ids.length === 0) {
+    throw new HttpsError("invalid-argument", "ids required");
+  }
+
+  const _db = getFirestore(undefined, DB_NAME); // 동일 보조 DB
+  const writer = _db.bulkWriter();
+  for (const id of ids) {
+    const ref = _db.collection(LEADS).doc(String(id));
+    writer.update(ref, { download: FieldValue.increment(1) });
+  }
+  await writer.close();
+
+  return { updated: ids.length };
+});

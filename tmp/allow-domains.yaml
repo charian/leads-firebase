@@ -1,0 +1,9 @@
+name: organizations/67658237811/policies/iam.allowedPolicyMemberDomains
+spec:
+  rules:
+    - values:
+        allowedValues:
+          # 조직 리소스 principal set (서비스 에이전트, 서비스 계정 포함 허용)
+          - is:principalSet://iam.googleapis.com/organizations/67658237811
+          # 이미 쓰고 있던 Workspace 고객 ID도 함께 허용
+          - is:C01o1kszn

@@ -1,23 +1,40 @@
 rules_version = '2';
 service cloud.firestore {
-  match /databases/{database}/documents {
-
-    function isAdmin() {
-      return request.auth != null &&
-             request.auth.token.email in [
-               "admin@example.com",
-               "you@company.com"
-             ];
+  match /databases/{db}/documents {
+  
+    // 슈퍼어드민인지 확인하는 함수
+    function isSuperAdmin() {
+      return request.auth != null && request.auth.token.email == "angdry@planplant.io";
     }
 
-    match /leads/{phoneId} {
-      allow create: if request.auth == null
-        && !exists(/databases/$(database)/documents/leads/$(phoneId))
-        && request.resource.data.phone_e164 == phoneId
-        && request.resource.data.name is string
-        && request.resource.data.phone_raw is string;
+    // 일반 어드민인지 DB에서 확인하는 함수
+    function isAdminOnly() {
+      return request.auth != null &&
+        get(/databases/$(db)/documents/_config/admins).data.roles[request.auth.token.email] == "admin";
+    }
 
-      allow read, list, update, delete: if isAdmin();
+    // 어드민 등급(슈퍼어드민 포함)인지 확인하는 함수
+    function isAdminOrHigher() {
+      return isSuperAdmin() || isAdminOnly();
+    }
+    
+    // 운영자 정보 문서에 대한 규칙
+    match /_config/admins {
+      // 오직 슈퍼어드민만 운영자 목록을 수정할 수 있습니다.
+      allow write: if isSuperAdmin();
+      // 모든 어드민은 운영자 목록을 읽을 수 있습니다.
+      allow read: if isAdminOrHigher();
+    }
+
+    match /leads/{leadId} {
+      // 웹사이트에서 리드를 생성할 수 있도록 허용 (기존과 동일)
+      allow create: if request.resource.data.keys().hasAll(['name', 'phone_e164', 'createdAt'])
+                      && request.resource.data.name is string
+                      && request.resource.data.phone_e164 is string;
+
+      // 어드민 등급 이상만 읽기, 수정, 삭제 가능
+      allow read, update, delete: if isAdminOrHigher();
     }
   }
 }
+

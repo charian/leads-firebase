@@ -4,12 +4,23 @@
     "public": "public",
     "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
     "rewrites": [
-      { "source": "/admin", "destination": "/admin/index.html" },
-      { "source": "/admin/**", "destination": "/admin/index.html" },
-      { "source": "/", "destination": "/index.html" },
-      { "source": "**", "destination": "/index.html" }
+      {
+        "source": "**",
+        "destination": "/admin/index.html"
+      }
     ]
   },
-  "firestore": { "rules": "firestore.rules", "indexes": "firestore.indexes.json" },
-  "functions": { "source": "functions", "runtime": "nodejs20" }
+  "functions": { "source": "functions", "runtime": "nodejs20" },
+  "firestore": [
+    {
+      "database": "(default)",
+      "rules": "firestore.rules",
+      "indexes": "firestore.indexes.json"
+    },
+    {
+      "database": "customer-database",
+      "rules": "firestore.rules",
+      "indexes": "firestore.indexes.json"
+    }
+  ]
 }

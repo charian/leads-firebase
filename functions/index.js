@@ -1,25 +1,60 @@
-// functions/index.js
-const { onRequest, onCall } = require("firebase-functions/v2/https");
+const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { setGlobalOptions } = require("firebase-functions/v2");
 const admin = require("firebase-admin");
 const { getFirestore, FieldValue } = require("firebase-admin/firestore");
 
-// 리전 고정
 setGlobalOptions({ region: "asia-northeast3" });
-
-// Admin SDK 초기화 (프로젝트 기본 앱)
 admin.initializeApp();
 
-// ===== 공용 설정 =====
-const DB_NAME = "customer-database"; // 보조 DB명
+const db = getFirestore("customer-database");
 const LEADS = "leads";
+const SUPER_ADMIN_EMAIL = "angdry@planplant.io";
 
-// (선택) 랜딩 도메인 CORS 화이트리스트 — createLead(http)에서만 사용
-const ALLOWED_ORIGINS = [
-  // 예: 'https://planplant.co.kr',
-];
+// --- Helper Functions for Permissions ---
 
-// 한국 번호 간이 정규화 → E.164(+82…)
+// Firestore에서 운영자 역할(role) 목록을 가져옵니다.
+const getAdminRoles = async () => {
+  const adminDoc = await db.collection("_config").doc("admins").get();
+  if (!adminDoc.exists) {
+    console.error("CRITICAL: '_config/admins' document not found!");
+    return {};
+  }
+  return adminDoc.data().roles || {};
+};
+
+// 요청한 사용자가 운영자인지 (슈퍼어드민 포함) 확인합니다.
+const ensureIsAdmin = async (context) => {
+  const email = context.auth?.token?.email;
+  if (!email) {
+    throw new HttpsError("unauthenticated", "Authentication required.");
+  }
+  if (email === SUPER_ADMIN_EMAIL) return email; // 슈퍼어드민은 항상 통과
+
+  const adminRoles = await getAdminRoles();
+  if (adminRoles[email] !== 'admin') {
+    throw new HttpsError("permission-denied", "Admin permission required.");
+  }
+  return email;
+};
+
+// 요청한 사용자가 슈퍼어드민인지 확인합니다.
+const ensureIsSuperAdmin = (context) => {
+  const email = context.auth?.token?.email;
+  if (email !== SUPER_ADMIN_EMAIL) {
+    throw new HttpsError("permission-denied", "Super admin permission required.");
+  }
+  return email;
+}
+
+// --- Utility Functions ---
+
+function formatPhoneNumber(raw) {
+  if (!raw) return "";
+  const digits = String(raw).replace(/\D/g, "");
+  if (digits.length === 11) return digits.replace(/(\d{3})(\d{4})(\d{4})/, "$1-$2-$3");
+  if (digits.length === 10) return digits.replace(/(\d{3})(\d{3})(\d{4})/, "$1-$2-$3");
+  return raw;
+}
 function normalizePhoneKR(raw) {
   if (!raw) return "";
   let digits = String(raw).replace(/\D/g, "");
@@ -27,139 +62,121 @@ function normalizePhoneKR(raw) {
   if (!digits.startsWith("82")) digits = "82" + digits;
   return "+" + digits;
 }
-
-// 지역값 정규화
 function normalizeRegion(input) {
   const v = String(input || "").trim();
   if (v === "수도권" || v.toLowerCase() === "metro") return { ko: "수도권", key: "metro" };
-  if (v === "비수도권" || ["non_metro", "non-metro"].includes(v.toLowerCase()))
-    return { ko: "비수도권", key: "non_metro" };
+  if (v === "비수도권" || ["non_metro", "non-metro"].includes(v.toLowerCase())) return { ko: "비수도권", key: "non_metro" };
   return null;
 }
 
-// 특정 Firestore 데이터베이스 핸들
-const db = getFirestore(undefined, DB_NAME);
+// --- Callable Functions ---
 
-// CORS helper (createLead용)
-function setCors(req, res) {
-  const origin = req.headers.origin || "";
-  const allowed = ALLOWED_ORIGINS.includes(origin);
-  if (allowed) res.set("Access-Control-Allow-Origin", origin);
-  res.set("Vary", "Origin");
-  res.set("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.set("Access-Control-Allow-Headers", "Content-Type");
-  return allowed;
-}
+// 웹사이트에서 새로운 리드를 생성합니다.
+exports.createLeadCall = onCall({ invoker: 'public' }, async (req) => {
+  const { name, phone, region, ...rest } = req.data || {};
+  if (!name || !phone || !region) throw new HttpsError("invalid-argument", "name, phone, region are required");
 
-/**
- * ping: 헬스체크용
- */
-exports.ping = onRequest((req, res) => res.status(200).send("pong"));
+  const regionInfo = normalizeRegion(region);
+  if (!regionInfo) throw new HttpsError("invalid-argument", "region must be 수도권 or 비수도권");
 
-/**
- * createLead: 랜딩에서 호출하는 HTTP 엔드포인트
- *  - CORS 허용 도메인에서만 동작
- *  - leads/{phone_e164} 문서로 저장 (중복 phone 차단)
- */
-exports.createLead = onRequest(async (req, res) => {
-  const allowed = setCors(req, res);
-  if (req.method === "OPTIONS") return res.status(204).send("");
-  if (!allowed) return res.status(403).json({ error: "Forbidden origin" });
+  const phoneE164 = normalizePhoneKR(phone);
+  if (!/^\+82\d{9,10}$/.test(phoneE164)) throw new HttpsError("invalid-argument", "invalid phone");
 
-  try {
-    if (req.method !== "POST") return res.status(405).json({ error: "Method Not Allowed" });
-
-    const {
-      name,
-      phone,
-      region,
-      referrer,
-      utm_source,
-      utm_medium,
-      utm_campaign,
-      utm_content,
-      utm_term,
-      page,
-      userAgent,
-    } = req.body || {};
-
-    if (!name || !phone || !region) {
-      return res.status(400).json({ error: "name, phone, region are required" });
-    }
-
-    const regionInfo = normalizeRegion(region);
-    if (!regionInfo) return res.status(400).json({ error: "region must be 수도권 or 비수도권" });
-
-    const phoneE164 = normalizePhoneKR(phone);
-    if (!/^\+\d{9,15}$/.test(phoneE164)) {
-      return res.status(400).json({ error: "invalid phone" });
-    }
-
-    const docRef = db.collection(LEADS).doc(phoneE164);
-
-    // 중복 체크
-    if ((await docRef.get()).exists) {
-      return res.status(409).json({ error: "duplicate phone", phone: phoneE164 });
-    }
-
-    await docRef.set(
-      {
-        name: String(name).trim(),
-        phone_raw: String(phone).trim(),
-        phone_e164: phoneE164,
-        region_key: regionInfo.key, // 'metro' | 'non_metro'
-        region_ko: regionInfo.ko,   // '수도권' | '비수도권'
-        referrer: referrer || req.headers["referer"] || "",
-        utm_source: utm_source || "",
-        utm_medium: utm_medium || "",
-        utm_campaign: utm_campaign || "",
-        utm_content: utm_content || "",
-        utm_term: utm_term || "",
-        page: page || "",
-        userAgent: userAgent || req.headers["user-agent"] || "",
-        createdAt: FieldValue.serverTimestamp(),
-        download: 0,
-      },
-      { merge: false }
-    );
-
-    return res.status(201).json({ ok: true, id: phoneE164 });
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: "internal", detail: err.message });
-  }
+  const newLeadRef = db.collection(LEADS).doc();
+  await newLeadRef.set({
+    id: newLeadRef.id,
+    name: String(name).trim(),
+    phone_raw: formatPhoneNumber(phone),
+    phone_e164: phoneE164,
+    region_key: regionInfo.key,
+    region_ko: regionInfo.ko,
+    referrer: rest.referrer || "",
+    utm_source: rest.utm_source || "",
+    utm_medium: rest.utm_medium || "",
+    utm_campaign: rest.utm_campaign || "",
+    utm_content: rest.utm_content || "",
+    utm_term: rest.utm_term || "",
+    page: rest.page || "",
+    userAgent: rest.userAgent || "",
+    createdAt: FieldValue.serverTimestamp(),
+    download: 0,
+    memo: "",
+  });
+  return { ok: true, id: newLeadRef.id };
 });
 
-/**
- * incrementDownloads: (되돌림) Firebase Callable Function
- *  - 클라이언트에서 httpsCallable로 호출
- *  - Firebase Auth 로그인 필수
- *  - leads/{id}.download 를 +1 (여러 개 배치 처리)
- *  - Admin SDK이므로 Firestore 보안규칙의 영향 없음
- */
-exports.incrementDownloads = onCall(async (req) => {
-  const uid = req.auth?.uid;
-  if (!uid) {
-    // functions/unauthenticated 에러 코드를 내보내려면 throw new HttpsError 사용 가능
-    const { HttpsError } = require("firebase-functions/v2/https");
-    throw new HttpsError("unauthenticated", "signin required");
-  }
-
+// 선택된 리드의 다운로드 카운트를 1 증가시킵니다.
+exports.incrementDownloads = onCall({ invoker: 'public' }, async (req) => {
+  await ensureIsAdmin(req);
   const ids = req.data?.ids;
-  if (!Array.isArray(ids) || ids.length === 0) {
-    const { HttpsError } = require("firebase-functions/v2/https");
-    throw new HttpsError("invalid-argument", "ids required");
-  }
+  if (!Array.isArray(ids) || ids.length === 0) throw new HttpsError("invalid-argument", "ids required");
 
-  // 같은 보조 DB 사용
-  const _db = getFirestore(undefined, DB_NAME);
-
-  const writer = _db.bulkWriter();
+  const writer = db.bulkWriter();
   for (const id of ids) {
-    const ref = _db.collection(LEADS).doc(id);
-    writer.update(ref, { download: FieldValue.increment(1) });
+    writer.update(db.collection(LEADS).doc(String(id)), { download: FieldValue.increment(1) });
   }
   await writer.close();
-
   return { updated: ids.length };
 });
+
+// 선택된 리드를 삭제합니다.
+exports.deleteLeads = onCall({ invoker: 'public' }, async (req) => {
+  await ensureIsAdmin(req);
+  const ids = req.data?.ids;
+  if (!Array.isArray(ids) || ids.length === 0) throw new HttpsError("invalid-argument", "ids are required.");
+
+  const writer = db.bulkWriter();
+  ids.forEach(id => writer.delete(db.collection(LEADS).doc(id)));
+  await writer.close();
+  return { ok: true, deletedCount: ids.length };
+});
+
+// 모든 운영자 목록을 가져옵니다.
+exports.getAdmins = onCall({ invoker: 'public' }, async (req) => {
+  try {
+    await ensureIsAdmin(req);
+    const roles = await getAdminRoles();
+
+    const superAdmin = { email: SUPER_ADMIN_EMAIL, role: 'super-admin' };
+    const otherAdmins = Object.entries(roles).map(([email, role]) => ({ email: String(email), role: String(role) }));
+
+    const adminList = [superAdmin, ...otherAdmins];
+
+    // 디버깅용 로그: 반환되는 데이터 구조를 확인합니다.
+    console.log("Returning admin list:", JSON.stringify(adminList));
+
+    return adminList;
+  } catch (error) {
+    // 디버깅용 로그: 에러 발생 시 기록합니다.
+    console.error("Error in getAdmins function:", error);
+    if (error instanceof HttpsError) {
+      throw error;
+    }
+    throw new HttpsError("internal", "An unexpected error occurred while fetching admins.");
+  }
+});
+
+// 새로운 운영자를 추가합니다 (슈퍼어드민 전용).
+exports.addAdmin = onCall({ invoker: 'public' }, async (req) => {
+  ensureIsSuperAdmin(req);
+  const newEmail = req.data?.email;
+  if (!newEmail || !newEmail.includes('@')) throw new HttpsError("invalid-argument", "Valid email is required.");
+  if (newEmail === SUPER_ADMIN_EMAIL) throw new HttpsError("already-exists", "Cannot manage super admin.");
+
+  const adminRef = db.collection("_config").doc("admins");
+  await adminRef.set({ roles: { [newEmail]: 'admin' } }, { merge: true });
+  return { ok: true };
+});
+
+// 운영자를 삭제합니다 (슈퍼어드민 전용).
+exports.removeAdmin = onCall({ invoker: 'public' }, async (req) => {
+  ensureIsSuperAdmin(req);
+  const emailToRemove = req.data?.email;
+  if (!emailToRemove) throw new HttpsError("invalid-argument", "Email is required.");
+  if (emailToRemove === SUPER_ADMIN_EMAIL) throw new HttpsError("permission-denied", "Cannot manage super admin.");
+
+  const adminRef = db.collection("_config").doc("admins");
+  await adminRef.update({ [`roles.${emailToRemove}`]: FieldValue.delete() });
+  return { ok: true };
+});
+
