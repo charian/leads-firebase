@@ -1,0 +1,7 @@
+name: projects/1099168071504/policies/iam.allowedPolicyMemberDomains
+spec:
+  rules:
+    - values:
+        allowedValues:
+          - gserviceaccount.com # <-- Firebase Hosting SA 도메인 허용
+          - planplant.io # (선택) 너희 도메인

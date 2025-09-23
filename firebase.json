@@ -6,6 +6,8 @@
     "rewrites": [
       { "source": "/admin", "destination": "/admin/index.html" },
       { "source": "/admin/**", "destination": "/admin/index.html" },
+      { "source": "/api/createLead", "function": { "functionId": "createLead", "region": "asia-northeast3" } },
+
       { "source": "/", "destination": "/index.html" },
       { "source": "**", "destination": "/index.html" }
     ]
