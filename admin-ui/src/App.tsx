@@ -1,244 +1,69 @@
 import { useEffect, useState } from "react";
 import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
 import { auth, googleProvider } from "./services/firebase";
-import { fetchLeads, updateLeadMemo } from "./services/leads";
-import { deleteLeadsCall, incrementDownloadsCall } from "./services/functions";
-import { getAdminsCall, addAdminCall, removeAdminCall } from "./services/admins";
-import { leadsToCsv } from "./utils/csv";
-import { useLeads } from "./hooks/useLeads";
-import type { Lead } from "./types";
-
-// ✨ 수정: List, Popconfirm, Tag 등 추가
-import { App as AntApp, Layout, Button, Typography, Space, Card, Spin, ConfigProvider, Menu, Input, List, Popconfirm, Tag } from "antd";
-import { GoogleOutlined, LogoutOutlined, DatabaseOutlined, UsergroupAddOutlined, PlusOutlined } from "@ant-design/icons";
+import { getMyRoleCall } from "./services/admins";
+import { App as AntApp, Layout, Button, Typography, Space, Card, Spin, ConfigProvider, Menu, Result } from "antd";
+import type { MenuProps } from "antd";
+import { GoogleOutlined, LogoutOutlined, DatabaseOutlined, UsergroupAddOutlined, MenuUnfoldOutlined, MenuFoldOutlined } from "@ant-design/icons";
 import koKR from "antd/locale/ko_KR";
-
-import FiltersComponent from "./components/Filters";
-import AntLeadsTable from "./components/AntLeadsTable";
+import { LeadsPage } from "./pages/LeadsPage";
+import { AdminsPage } from "./pages/AdminsPage";
 
 const { Header, Content, Sider } = Layout;
-const { Title, Text } = Typography;
+const { Title } = Typography;
 
-// ✨ 추가: 운영자 데이터 타입을 명확하게 정의
-type Admin = {
-  email: string;
-  role: "super-admin" | "admin";
-};
-
-// ✨ 운영자 관리 페이지 컴포넌트
-const AdminsPage = () => {
-  const { message } = AntApp.useApp();
-  // ✨ 수정: state 타입을 Admin 객체 배열로 변경
-  const [admins, setAdmins] = useState<Admin[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [newAdminEmail, setNewAdminEmail] = useState("");
-  const [isAdding, setIsAdding] = useState(false);
-
-  const fetchAdmins = async () => {
-    setLoading(true);
-    try {
-      // ✨ 수정: TypeScript 오류를 해결하기 위해 'as unknown'을 추가하여 명시적인 타입 변환을 수행합니다.
-      const adminList = (await getAdminsCall()) as unknown as Admin[];
-      setAdmins(adminList);
-    } catch (e: any) {
-      message.error(`운영자 목록을 불러오는 데 실패했습니다: ${e.message}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    void fetchAdmins();
-  }, []);
-
-  const handleAddAdmin = async () => {
-    if (!newAdminEmail || !newAdminEmail.includes("@")) {
-      message.warning("올바른 이메일 형식을 입력해주세요.");
-      return;
-    }
-    setIsAdding(true);
-    try {
-      await addAdminCall(newAdminEmail);
-      message.success(`${newAdminEmail} 님을 운영자로 추가했습니다.`);
-      setNewAdminEmail("");
-      await fetchAdmins(); // 목록 새로고침
-    } catch (e: any) {
-      message.error(`운영자 추가에 실패했습니다: ${e.message}`);
-    } finally {
-      setIsAdding(false);
-    }
-  };
-
-  const handleRemoveAdmin = async (emailToRemove: string) => {
-    try {
-      await removeAdminCall(emailToRemove);
-      message.success(`${emailToRemove} 님을 운영자에서 삭제했습니다.`);
-      await fetchAdmins(); // 목록 새로고침
-    } catch (e: any) {
-      message.error(`운영자 삭제에 실패했습니다: ${e.message}`);
-    }
-  };
-
-  return (
-    <Card title='운영자 관리'>
-      <Space.Compact style={{ marginBottom: 24, width: "100%", maxWidth: 400 }}>
-        <Input placeholder='추가할 Google 계정 이메일' value={newAdminEmail} onChange={(e) => setNewAdminEmail(e.target.value)} onPressEnter={handleAddAdmin} />
-        <Button type='primary' icon={<PlusOutlined />} onClick={handleAddAdmin} loading={isAdding}>
-          추가
-        </Button>
-      </Space.Compact>
-      <List
-        header={<div>운영자 목록</div>}
-        bordered
-        loading={loading}
-        dataSource={admins}
-        // ✨ 수정: renderItem의 파라미터를 admin 객체로 받고, 내부에서 admin.email과 admin.role을 사용
-        renderItem={(admin) => (
-          <List.Item
-            actions={[
-              admin.role !== "super-admin" && (
-                <Popconfirm title={`${admin.email} 님을 정말 삭제하시겠습니까?`} onConfirm={() => handleRemoveAdmin(admin.email)} okText='삭제' cancelText='취소'>
-                  <Button danger size='small'>
-                    삭제
-                  </Button>
-                </Popconfirm>
-              ),
-            ]}
-          >
-            <List.Item.Meta title={admin.email} description={<Tag color={admin.role === "super-admin" ? "gold" : "blue"}>{admin.role}</Tag>} />
-          </List.Item>
-        )}
-      />
-    </Card>
-  );
-};
-
-// ✨ 리드 관리 페이지 컴포넌트
-const LeadsPage = () => {
-  const { modal, message } = AntApp.useApp();
-  const { confirm } = modal;
-
-  const [rows, setRows] = useState<Lead[]>([]);
-  const [selected, setSelected] = useState<string[]>([]);
-  const [loading, setLoading] = useState(false);
-
-  const { filters, updateFilters, page, setPage, total, pageRows, pageSize } = useLeads(rows);
-
-  const reload = async () => {
-    setLoading(true);
-    try {
-      const data = await fetchLeads();
-      setRows(data);
-    } catch (e: any) {
-      message.error("데이터를 불러오는 데 실패했습니다.");
-    }
-    setPage(1);
-    setSelected([]);
-    setLoading(false);
-  };
-
-  useEffect(() => {
-    void reload();
-  }, []);
-
-  const downloadCsv = async () => {
-    if (selected.length === 0) {
-      message.warning("다운로드할 행을 선택해주세요.");
-      return;
-    }
-    const chosen = rows.filter((r) => selected.includes(r.id));
-    const csv = leadsToCsv(chosen);
-    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `leads_selected_${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-
-    try {
-      await incrementDownloadsCall(chosen.map((r) => r.id));
-      const inc = new Set(chosen.map((r) => r.id));
-      setRows((prev) => prev.map((r) => (inc.has(r.id) ? { ...r, download: Number(r.download ?? 0) + 1 } : r)));
-      message.success(`${chosen.length}건의 다운로드 카운트를 업데이트했습니다.`);
-    } catch (e: any) {
-      message.error(`다운로드 카운트 업데이트 실패: ${e?.message}`);
-    }
-  };
-
-  const handleDelete = () => {
-    if (selected.length === 0) {
-      message.warning("삭제할 리드를 선택해주세요.");
-      return;
-    }
-    confirm({
-      title: `${selected.length}개의 리드를 정말 삭제하시겠습니까?`,
-      content: "삭제된 데이터는 복구할 수 없습니다.",
-      okText: "삭제",
-      okType: "danger",
-      cancelText: "취소",
-      onOk: async () => {
-        try {
-          setLoading(true);
-          await deleteLeadsCall(selected);
-          message.success(`${selected.length}개의 리드를 삭제했습니다.`);
-          setRows((prev) => prev.filter((row) => !selected.includes(row.id)));
-          setSelected([]);
-        } catch (e: any) {
-          message.error(`삭제 중 오류가 발생했습니다: ${e.message}`);
-        } finally {
-          setLoading(false);
-        }
-      },
-    });
-  };
-
-  const handleMemoSave = async (leadId: string, memo: string) => {
-    try {
-      await updateLeadMemo(leadId, memo);
-      setRows((prev) => prev.map((row) => (row.id === leadId ? { ...row, memo } : row)));
-      message.success("메모가 저장되었습니다.");
-    } catch (e: any) {
-      message.error(`메모 저장 중 오류가 발생했습니다: ${e.message}`);
-    }
-  };
-
-  return (
-    <Card>
-      <FiltersComponent value={filters} onChange={updateFilters} onReload={reload} onDownload={downloadCsv} onDelete={handleDelete} selectedCount={selected.length} />
-      <div style={{ marginTop: 24 }}>
-        <AntLeadsTable
-          rows={pageRows}
-          loading={loading}
-          selectedRowKeys={selected}
-          onSelectionChange={setSelected}
-          page={page}
-          pageSize={pageSize}
-          total={total}
-          onPageChange={setPage}
-          onMemoSave={handleMemoSave}
-        />
-      </div>
-    </Card>
-  );
-};
-
-// ✨ 메인 앱 로직
 const AdminApp = () => {
   const [me, setMe] = useState<string | null>(null);
+  const [myRole, setMyRole] = useState<"super-admin" | "admin" | "user" | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
-  const [currentMenu, setCurrentMenu] = useState("leads");
+  const [collapsed, setCollapsed] = useState(false);
+  const [pathname, setPathname] = useState(window.location.pathname);
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (u) => {
-      setMe(u?.email ?? null);
+    const handlePopState = () => setPathname(window.location.pathname);
+    window.addEventListener("popstate", handlePopState);
+    if (window.location.pathname === "/") {
+      const defaultPath = "/dbs";
+      window.history.replaceState({}, "", defaultPath);
+      setPathname(defaultPath);
+    }
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, async (user) => {
+      setAuthLoading(true);
+      if (user && user.email) {
+        setMe(user.email);
+        try {
+          const { role } = await getMyRoleCall();
+          setMyRole(role);
+        } catch (e) {
+          console.error("Failed to get user role:", e);
+          setMyRole(null);
+        }
+      } else {
+        setMe(null);
+        setMyRole(null);
+      }
       setAuthLoading(false);
     });
     return unsub;
   }, []);
 
   const login = async () => await signInWithPopup(auth, googleProvider);
-  const logout = async () => await signOut(auth);
+  const logout = async () => {
+    await signOut(auth);
+    window.location.href = "/";
+  };
+
+  const handleMenuSelect = ({ key }: { key: string }) => {
+    const newPath = `/${key}`;
+    if (pathname !== newPath) {
+      window.history.pushState({}, "", newPath);
+      setPathname(newPath);
+    }
+  };
 
   if (authLoading) {
     return (
@@ -259,40 +84,89 @@ const AdminApp = () => {
       </Layout>
     );
   }
+  if (!myRole) {
+    return (
+      <Layout style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <Card title='접근 불가'>
+          <p>접근 권한이 없습니다. ({me})</p>
+          <Button icon={<LogoutOutlined />} onClick={logout} block>
+            로그아웃
+          </Button>
+        </Card>
+      </Layout>
+    );
+  }
+
+  const menuKey = pathname.startsWith("/admins") ? "admins" : "dbs";
+  const menuItems: MenuProps["items"] = [{ key: "dbs", icon: <DatabaseOutlined />, label: "DB 목록" }];
+  if (myRole === "admin" || myRole === "super-admin") {
+    menuItems.push({ key: "admins", icon: <UsergroupAddOutlined />, label: "운영자 관리" });
+  }
+
+  const renderContent = () => {
+    if (pathname.startsWith("/dbs")) {
+      // ✨ 수정: 불필요한 myRole 속성 제거
+      return <LeadsPage />;
+    }
+    if (pathname.startsWith("/admins")) {
+      if (myRole === "admin" || myRole === "super-admin") {
+        return <AdminsPage myRole={myRole} />;
+      }
+      return (
+        <Result
+          status='403'
+          title='403'
+          subTitle='죄송합니다. 이 페이지에 접근할 권한이 없습니다.'
+          extra={
+            <Button type='primary' onClick={() => (window.location.href = "/dbs")}>
+              DB 목록으로 돌아가기
+            </Button>
+          }
+        />
+      );
+    }
+    return (
+      <Result
+        status='404'
+        title='404'
+        subTitle='죄송합니다. 페이지를 찾을 수 없습니다.'
+        extra={
+          <Button type='primary' onClick={() => (window.location.href = "/dbs")}>
+            DB 목록으로 돌아가기
+          </Button>
+        }
+      />
+    );
+  };
 
   return (
     <Layout style={{ minHeight: "100vh" }}>
-      <Sider>
-        <div style={{ height: 32, margin: 16, background: "rgba(255, 255, 255, 0.2)", color: "white", display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 6 }}>
-          Admin Menu
-        </div>
-        <Menu
-          theme='dark'
-          mode='inline'
-          defaultSelectedKeys={["leads"]}
-          onSelect={({ key }) => setCurrentMenu(key)}
-          items={[
-            { key: "leads", icon: <DatabaseOutlined />, label: "DB 목록" },
-            { key: "admins", icon: <UsergroupAddOutlined />, label: "운영자 관리" },
-          ]}
-        />
+      <Sider
+        collapsible
+        collapsed={collapsed}
+        onCollapse={(value) => setCollapsed(value)}
+        breakpoint='lg'
+        onBreakpoint={(broken) => setCollapsed(broken)}
+        collapsedWidth={0}
+        trigger={null}
+        style={{ position: "fixed", left: 0, top: 0, bottom: 0, height: "100vh", overflow: "auto" }}
+      >
+        <div style={{ height: 32, margin: 16, background: "rgba(255, 255, 255, 0.2)", color: "white", display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 6 }}>Admin</div>
+        <Menu theme='dark' mode='inline' selectedKeys={[menuKey]} onSelect={handleMenuSelect} items={menuItems} />
       </Sider>
-      <Layout>
-        <Header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", backgroundColor: "white", padding: "0 24px" }}>
+      <Layout style={{ marginLeft: collapsed ? 0 : 200, transition: "margin-left 0.2s" }}>
+        <Header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", backgroundColor: "white", padding: "0 16px" }}>
           <Space>
-            <Title level={3} style={{ margin: 0 }}>
+            <Button type='text' icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />} onClick={() => setCollapsed(!collapsed)} style={{ fontSize: "16px", width: 48, height: 48 }} />
+            <Title level={3} style={{ margin: 0, fontSize: "18px" }}>
               기획공장 Admin
             </Title>
-            <Text type='secondary'>{currentMenu === "leads" ? "Leads 관리" : "운영자 관리"}</Text>
           </Space>
           <Button icon={<LogoutOutlined />} onClick={logout}>
             로그아웃
           </Button>
         </Header>
-        <Content style={{ padding: "24px" }}>
-          {currentMenu === "leads" && <LeadsPage />}
-          {currentMenu === "admins" && <AdminsPage />}
-        </Content>
+        <Content style={{ padding: "16px", margin: 0, minHeight: 280, background: "#f0f2f5" }}>{renderContent()}</Content>
       </Layout>
     </Layout>
   );

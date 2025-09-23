@@ -1,39 +1,43 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{db}/documents {
-  
-    // 슈퍼어드민인지 확인하는 함수
-    function isSuperAdmin() {
-      return request.auth != null && request.auth.token.email == "angdry@planplant.io";
-    }
-
-    // 일반 어드민인지 DB에서 확인하는 함수
-    function isAdminOnly() {
-      return request.auth != null &&
-        get(/databases/$(db)/documents/_config/admins).data.roles[request.auth.token.email] == "admin";
-    }
-
-    // 어드민 등급(슈퍼어드민 포함)인지 확인하는 함수
-    function isAdminOrHigher() {
-      return isSuperAdmin() || isAdminOnly();
-    }
     
-    // 운영자 정보 문서에 대한 규칙
-    match /_config/admins {
-      // 오직 슈퍼어드민만 운영자 목록을 수정할 수 있습니다.
-      allow write: if isSuperAdmin();
-      // 모든 어드민은 운영자 목록을 읽을 수 있습니다.
-      allow read: if isAdminOrHigher();
+    // --- Helper Functions ---
+    function getRoles() {
+      return get(/databases/$(db)/documents/_config/admins).data.roles;
     }
 
-    match /leads/{leadId} {
-      // 웹사이트에서 리드를 생성할 수 있도록 허용 (기존과 동일)
-      allow create: if request.resource.data.keys().hasAll(['name', 'phone_e164', 'createdAt'])
-                      && request.resource.data.name is string
-                      && request.resource.data.phone_e164 is string;
+    function getEmail() {
+      return request.auth.token.email;
+    }
 
-      // 어드민 등급 이상만 읽기, 수정, 삭제 가능
-      allow read, update, delete: if isAdminOrHigher();
+    function getMyRole() {
+      return getRoles()[getEmail()];
+    }
+
+    // --- Rules for Leads Collection ---
+    match /leads/{leadId} {
+      allow create: if request.resource.data.keys().hasAll(['name', 'phone_e164', 'createdAt']);
+      allow read, delete: if getMyRole() in ['super-admin', 'admin', 'user'];
+      allow update: if getMyRole() in ['super-admin', 'admin', 'user'];
+    }
+
+    // --- Rules for Config Collection ---
+    match /_config/admins {
+      // ✨ 수정: "닭이 먼저냐 달걀이 먼저냐" 문제를 해결하기 위해,
+      // 로그인한 모든 사용자가 자신의 등급을 확인할 수 있도록 읽기 권한을 허용합니다.
+      allow read: if request.auth != null;
+      
+      // ✨ 수정: get() 함수 대신 기존 데이터(resource)를 직접 확인하여 순환 참조를 방지합니다.
+      allow update: if resource.data.roles[getEmail()] == 'super-admin';
+      
+      allow create, delete: if false;
+    }
+
+    // --- Rules for Mail Collection ---
+    match /mail/{docId} {
+        allow create: if true;
+        allow read, update, delete: if false;
     }
   }
 }

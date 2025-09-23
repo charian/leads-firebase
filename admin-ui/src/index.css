@@ -29,6 +29,16 @@ body {
   letter-spacing: 0.2px;
 }
 
+.bad-lead-row td {
+  background: #fff1f0 !important;
+}
+
+/* 선택되었거나 마우스를 올렸을 때도 배경색이 유지되도록 합니다 */
+.ant-table-tbody > tr.bad-lead-row:hover > td,
+.ant-table-tbody > tr.bad-lead-row.ant-table-row-selected > td {
+  background: #ffd6d2 !important;
+}
+
 /* ===== Layout ===== */
 .container {
   max-width: 1200px;

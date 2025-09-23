@@ -10,7 +10,10 @@
       }
     ]
   },
-  "functions": { "source": "functions", "runtime": "nodejs20" },
+  "functions": {
+    "source": "functions",
+    "runtime": "nodejs20"
+  },
   "firestore": [
     {
       "database": "(default)",

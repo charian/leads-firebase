@@ -12,6 +12,7 @@
   "dependencies": {
     "@ant-design/icons": "^6.0.2",
     "antd": "^5.27.4",
+    "dayjs": "^1.11.18",
     "firebase": "^12.2.1",
     "papaparse": "^5.5.3",
     "react": "^19.1.1",
