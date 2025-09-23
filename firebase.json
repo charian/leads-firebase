@@ -1,12 +1,11 @@
 {
   "hosting": {
-    "site": "planplant-database",
-    "public": "public",
+    "public": "admin-ui/dist",
     "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
     "rewrites": [
       {
         "source": "**",
-        "destination": "/admin/index.html"
+        "destination": "/index.html"
       }
     ]
   },
@@ -17,13 +16,11 @@
   "firestore": [
     {
       "database": "(default)",
-      "rules": "firestore.rules",
-      "indexes": "firestore.indexes.json"
+      "rules": "firestore.rules"
     },
     {
       "database": "customer-database",
-      "rules": "firestore.rules",
-      "indexes": "firestore.indexes.json"
+      "rules": "firestore.rules"
     }
   ]
 }

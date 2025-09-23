@@ -1,15 +1,15 @@
 import { useEffect, useState } from "react";
-import { App as AntApp, Button, Space, Card, Input, List, Popconfirm, Tag, Select } from "antd";
+import { App, Button, Space, Card, Input, List, Popconfirm, Tag, Select } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import { getAdminsCall, addAdminCall, removeAdminCall, updateAdminRoleCall } from "../services/admins";
 import type { Admin } from "../types";
 
 interface AdminsPageProps {
-  myRole: "super-admin" | "admin" | "user" | null;
+  myRole: "super-admin" | "admin";
 }
 
 export const AdminsPage = ({ myRole }: AdminsPageProps) => {
-  const { message } = AntApp.useApp();
+  const { message } = App.useApp();
   const [admins, setAdmins] = useState<Admin[]>([]);
   const [loading, setLoading] = useState(true);
   const [newAdminEmail, setNewAdminEmail] = useState("");
@@ -32,7 +32,10 @@ export const AdminsPage = ({ myRole }: AdminsPageProps) => {
   }, []);
 
   const handleAddAdmin = async () => {
-    if (!newAdminEmail || !newAdminEmail.includes("@")) return message.warning("올바른 이메일 형식을 입력해주세요.");
+    if (!newAdminEmail || !newAdminEmail.includes("@")) {
+      message.warning("올바른 이메일 형식을 입력해주세요.");
+      return;
+    }
     setIsAdding(true);
     try {
       await addAdminCall(newAdminEmail, "user");
@@ -85,14 +88,15 @@ export const AdminsPage = ({ myRole }: AdminsPageProps) => {
         dataSource={admins}
         renderItem={(admin) => (
           <List.Item
+            key={admin.email}
             actions={
               isSuperAdmin && admin.role !== "super-admin"
                 ? [
-                    <Select value={admin.role} onChange={(value) => handleRoleChange(admin.email, value)} style={{ width: 120 }}>
+                    <Select key='select' value={admin.role} onChange={(value) => handleRoleChange(admin.email, value)} style={{ width: 120 }}>
                       <Select.Option value='admin'>Admin</Select.Option>
                       <Select.Option value='user'>User</Select.Option>
                     </Select>,
-                    <Popconfirm title={`${admin.email} 님을 정말 삭제하시겠습니까?`} onConfirm={() => handleRemoveAdmin(admin.email)} okText='삭제' cancelText='취소'>
+                    <Popconfirm key='delete' title={`${admin.email} 님을 정말 삭제하시겠습니까?`} onConfirm={() => handleRemoveAdmin(admin.email)} okText='삭제' cancelText='취소'>
                       <Button danger size='small'>
                         삭제
                       </Button>

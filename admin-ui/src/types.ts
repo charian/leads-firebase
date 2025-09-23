@@ -1,38 +1,45 @@
-import { Dayjs } from "dayjs";
+import type { Dayjs } from "dayjs";
+import type { Timestamp } from "firebase/firestore";
 
-export type Lead = {
+export interface Lead {
   id: string;
   name: string;
   phone_raw: string;
   phone_e164: string;
   region_ko: string;
-  region_key: string;
-  referrer?: string;
-  utm_source?: string;
-  utm_medium?: string;
-  utm_campaign?: string;
-  utm_content?: string;
-  utm_term?: string;
-  page?: string;
-  userAgent?: string;
-  createdAt: any; // Firestore Timestamp
+  createdAt: Timestamp;
   download: number;
-  memo?: string;
-  isBad?: boolean;
-  downloadedAt?: any; // Firestore Timestamp
+  downloadedAt?: Timestamp;
   downloadedBy?: string;
-};
+  isBad: boolean;
+  memo: string;
+  [key: string]: any;
+}
 
-export type Filters = {
-  // ✨ 수정: RangePicker가 null 값을 가질 수 있도록 타입을 수정합니다.
+export interface Admin {
+  email: string;
+  role: "super-admin" | "admin" | "user";
+}
+
+export interface Filters {
+  // ✨ 수정: RangePicker가 null을 반환할 수 있도록 | null을 추가합니다.
   dateRange: [Dayjs | null, Dayjs | null] | null;
   status: "all" | "good" | "bad";
   dl: "all" | "yes" | "no";
   name: string;
   phone: string;
-};
+}
 
-export type Admin = {
-  email: string;
-  role: "super-admin" | "admin" | "user";
-};
+export interface SettlementCost {
+  [year: string]: number;
+}
+
+export interface HistoryLog {
+  id: string;
+  action: "DOWNLOAD" | "DELETE" | "UPDATE_MEMO";
+  userEmail: string;
+  leadId: string;
+  timestamp: Timestamp;
+  from?: string;
+  to?: string;
+}

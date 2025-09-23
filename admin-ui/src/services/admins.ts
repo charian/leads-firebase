@@ -1,12 +1,20 @@
 import { httpsCallable } from "firebase/functions";
 import { functions } from "./firebase";
+import { doc, getDoc } from "firebase/firestore";
+import { db } from "./firebase";
 import type { Admin } from "../types";
 
-// ✨ 추가: "내 등급 확인" 전용 함수 호출
-export async function getMyRoleCall(): Promise<{ email: string; role: "super-admin" | "admin" | "user" | null }> {
-  const fn = httpsCallable(functions, "getMyRole");
-  const res = await fn();
-  return res.data as { email: string; role: "super-admin" | "admin" | "user" | null };
+// ✨ 수정: getMyRoleCall 함수는 더 이상 필요 없으므로 삭제합니다.
+
+// ✨ 수정: 로그인 시 Firestore에서 직접 역할을 가져오는 함수
+export async function getMyRoleFromFirestore(email: string): Promise<Admin["role"] | null> {
+  const docRef = doc(db, "_config", "admins");
+  const docSnap = await getDoc(docRef);
+  if (docSnap.exists()) {
+    const roles = docSnap.data().roles || {};
+    return roles[email] || null;
+  }
+  return null;
 }
 
 export async function getAdminsCall(): Promise<Admin[]> {
@@ -15,20 +23,17 @@ export async function getAdminsCall(): Promise<Admin[]> {
   return res.data as Admin[];
 }
 
-export async function addAdminCall(email: string, role: "admin" | "user"): Promise<{ ok: boolean }> {
+export async function addAdminCall(email: string, role: "admin" | "user") {
   const fn = httpsCallable(functions, "addAdmin");
-  const res = await fn({ email, role });
-  return res.data as { ok: boolean };
+  await fn({ email, role });
 }
 
-export async function updateAdminRoleCall(email: string, role: "admin" | "user"): Promise<{ ok: boolean }> {
+export async function updateAdminRoleCall(email: string, role: "admin" | "user") {
   const fn = httpsCallable(functions, "updateAdminRole");
-  const res = await fn({ email, role });
-  return res.data as { ok: boolean };
+  await fn({ email, role });
 }
 
-export async function removeAdminCall(email: string): Promise<{ ok: boolean }> {
+export async function removeAdminCall(email: string) {
   const fn = httpsCallable(functions, "removeAdmin");
-  const res = await fn({ email });
-  return res.data as { ok: boolean };
+  await fn({ email });
 }

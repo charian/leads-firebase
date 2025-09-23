@@ -33,7 +33,10 @@ export const LeadsPage = () => {
   }, [filters]);
 
   const downloadCsv = async () => {
-    if (selected.length === 0) return message.warning("다운로드할 행을 선택해주세요.");
+    if (selected.length === 0) {
+      message.warning("다운로드할 행을 선택해주세요.");
+      return;
+    }
     const chosen = rows.filter((r) => selected.includes(r.id));
     const csv = leadsToCsv(chosen);
     const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
@@ -46,15 +49,18 @@ export const LeadsPage = () => {
 
     try {
       await incrementDownloadsCall(chosen.map((r) => r.id));
-      setRows((prev) => prev.map((r) => (chosen.find((c) => c.id === r.id) ? { ...r, download: Number(r.download ?? 0) + 1 } : r)));
-      message.success(`${chosen.length}건의 다운로드 카운트를 업데이트했습니다.`);
+      await reload(); // Reload to get updated download info
+      message.success(`${chosen.length}건의 다운로드 정보를 업데이트했습니다.`);
     } catch (e: any) {
-      message.error(`다운로드 카운트 업데이트 실패: ${e?.message}`);
+      message.error(`다운로드 정보 업데이트 실패: ${e?.message}`);
     }
   };
 
-  const handleDeleteLeads = () => {
-    if (selected.length === 0) return message.warning("삭제할 리드를 선택해주세요.");
+  const handleDelete = () => {
+    if (selected.length === 0) {
+      message.warning("삭제할 리드를 선택해주세요.");
+      return;
+    }
     confirm({
       title: `${selected.length}개의 리드를 정말 삭제하시겠습니까?`,
       content: "삭제된 데이터는 복구할 수 없습니다.",
@@ -67,6 +73,7 @@ export const LeadsPage = () => {
           await deleteLeadsCall(selected);
           message.success(`${selected.length}개의 리드를 삭제했습니다.`);
           await reload();
+          setSelected([]);
         } catch (e: any) {
           message.error(`삭제 중 오류가 발생했습니다: ${e.message}`);
         } finally {
@@ -76,13 +83,14 @@ export const LeadsPage = () => {
     });
   };
 
-  const handleMemoSave = async (leadId: string, memo: string) => {
+  const handleMemoSave = async (leadId: string, memo: string, oldMemo: string) => {
     try {
-      await updateLeadMemo(leadId, memo);
+      await updateLeadMemo(leadId, memo, oldMemo);
       setRows((prev) => prev.map((row) => (row.id === leadId ? { ...row, memo } : row)));
+      message.success("메모가 저장되었습니다.");
     } catch (e: any) {
       message.error(`메모 저장 중 오류가 발생했습니다: ${e.message}`);
-      throw e;
+      throw e; // Propagate error to child component
     }
   };
 
@@ -104,7 +112,7 @@ export const LeadsPage = () => {
           <Button icon={<DownloadOutlined />} onClick={downloadCsv} disabled={selected.length === 0}>
             다운로드(CSV)
           </Button>
-          <Button danger icon={<DeleteOutlined />} disabled={selected.length === 0} onClick={handleDeleteLeads}>
+          <Button danger icon={<DeleteOutlined />} disabled={selected.length === 0} onClick={handleDelete}>
             삭제 ({selected.length})
           </Button>
         </Space>
@@ -117,7 +125,10 @@ export const LeadsPage = () => {
         page={page}
         pageSize={pageSize}
         total={total}
-        onPageChange={(page) => setPage(page)}
+        onPageChange={(page, size) => {
+          setPage(page);
+          // Optional: handle page size change if needed
+        }}
         onMemoSave={handleMemoSave}
         onBadLeadToggle={handleBadLeadToggle}
       />
