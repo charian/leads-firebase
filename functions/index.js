@@ -169,6 +169,7 @@ exports.createLeadCall = onCall({ invoker: "public" }, async (req) => {
   };
   await db.collection("mail").add({
     to: ['angdry@planplant.io'],
+    from: 'contact@planplant.io',
     message: {
       subject: `[기획공장] 신규 리드가 등록되었습니다: ${name}`,
       html: `<h3>신규 리드 정보</h3><p><strong>이름:</strong> ${newLead.name}</p><p><strong>연락처:</strong> ${newLead.phone_raw}</p><p><strong>지역:</strong> ${newLead.region_ko}</p><p><strong>UTM 소스:</strong> ${newLead.utm_source || 'N/A'}</p>`,
@@ -227,6 +228,7 @@ exports.sendDailySummary = onSchedule({ schedule: "every day 05:00", timeZone: "
   const leadsHtml = leads.map(lead => `<li>${lead.name} (${lead.phone_raw}) - ${lead.region_ko}</li>`).join('');
   await db.collection("mail").add({
     to: ['angdry@planplant.io'],
+    from: 'contact@planplant.io',
     message: {
       subject: `[기획공장] ${summaryDate} 리드 요약 (${totalLeads}건)`,
       html: `<h3>${summaryDate} 신규 리드 요약</h3><p>총 <strong>${totalLeads}</strong>건의 신규 리드가 등록되었습니다.</p><ul>${leadsHtml}</ul>`,
@@ -279,3 +281,83 @@ exports.getHistory = onCall({ invoker: 'public' }, async (req) => {
   return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 });
 
+
+exports.getAdvancedDashboardStats = onCall({ invoker: 'public' }, async (req) => {
+  // 모든 등급의 관리자가 통계를 볼 수 있도록 허용
+  await ensureIsRole(req, ['super-admin', 'admin', 'user']);
+
+  // --- 1. 날짜 범위 계산 (한국 시간 기준) ---
+  const timeZone = "Asia/Seoul";
+  const now = new Date();
+
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+  const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+
+  const yesterday = subDays(startOfToday, 1);
+  const startOfYesterday = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate(), 0, 0, 0);
+  const endOfYesterday = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate(), 23, 59, 59, 999);
+
+  const trendStartDate = subDays(startOfToday, 29); // 오늘 포함 총 30일 데이터
+
+  // --- 2. Firestore에서 데이터 병렬 조회 ---
+  const todayQuery = db.collection(LEADS).where('createdAt', '>=', startOfToday).where('createdAt', '<=', endOfToday).get();
+  const yesterdayQuery = db.collection(LEADS).where('createdAt', '>=', startOfYesterday).where('createdAt', '<=', endOfYesterday).get();
+  const trendQuery = db.collection(LEADS).where('createdAt', '>=', trendStartDate).get();
+
+  const [todaySnapshot, yesterdaySnapshot, trendSnapshot] = await Promise.all([todayQuery, yesterdayQuery, trendQuery]);
+
+  // --- 3. 데이터 가공 및 통계 계산 ---
+
+  // 어제 DB 통계
+  const yesterdayLeads = yesterdaySnapshot.docs.map(doc => doc.data());
+  const yesterdayStats = {
+    total: yesterdayLeads.length,
+    bad: yesterdayLeads.filter(lead => lead.isBad).length,
+  };
+
+  // 오늘 DB 통계
+  const todayLeads = todaySnapshot.docs.map(doc => doc.data());
+  const todayBySource = todayLeads.reduce((acc, lead) => {
+    const source = lead.utm_source || 'N/A'; // 매체(utm_source)가 없는 경우 'N/A'로 집계
+    if (!acc[source]) {
+      acc[source] = 0;
+    }
+    acc[source]++;
+    return acc;
+  }, {});
+
+  const todayStats = {
+    total: todayLeads.length,
+    bad: todayLeads.filter(lead => lead.isBad).length,
+    bySource: todayBySource, // 매체별 통계 추가
+  };
+
+  // 일자별 DB 추가 수 추세 (Area Spline Chart용 데이터)
+  const dailyCounts = {};
+  for (let i = 0; i < 30; i++) {
+    const date = subDays(startOfToday, i);
+    const dateString = formatInTimeZone(date, timeZone, 'yyyy-MM-dd');
+    dailyCounts[dateString] = 0;
+  }
+
+  trendSnapshot.forEach(doc => {
+    const lead = doc.data();
+    if (lead.createdAt) {
+      const dateString = formatInTimeZone(lead.createdAt.toDate(), timeZone, 'yyyy-MM-dd');
+      if (dailyCounts[dateString] !== undefined) {
+        dailyCounts[dateString]++;
+      }
+    }
+  });
+
+  const trendData = Object.keys(dailyCounts)
+    .map(date => ({ date, count: dailyCounts[date] }))
+    .sort((a, b) => new Date(a.date) - new Date(b.date)); // 날짜순으로 정렬
+
+  // --- 4. 최종 결과 반환 ---
+  return {
+    yesterday: yesterdayStats,
+    today: todayStats,
+    trend: trendData,
+  };
+});
