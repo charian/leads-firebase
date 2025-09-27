@@ -1,23 +1,22 @@
 import { useEffect, useState } from "react";
-// ✨ 수정: 빠져있던 signOut을 다시 import 합니다.
 import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
 import { auth, googleProvider } from "./services/firebase";
-import { getMyRoleFromFirestore } from "./services/admins";
-import { Routes, Route, Navigate, Outlet } from "react-router-dom";
+// ✨ 수정: getMyRoleCall을 사용하도록 변경
+import { getMyRoleCall } from "./services/admins";
+import { Routes, Route, Link, useNavigate, useLocation, Navigate, Outlet } from "react-router-dom";
 
 import { App as AntApp, Layout, Button, Card, Spin, ConfigProvider, Result } from "antd";
-import { GoogleOutlined, LogoutOutlined } from "@ant-design/icons";
+import type { MenuProps } from "antd";
+import { GoogleOutlined, LogoutOutlined, DatabaseOutlined, UsergroupAddOutlined, MenuUnfoldOutlined, MenuFoldOutlined, DollarCircleOutlined, HistoryOutlined } from "@ant-design/icons";
 import koKR from "antd/locale/ko_KR";
 
-// ✨ 수정: AppLayout.tsx 파일을 올바르게 import 합니다.
-import { AppLayout } from "./components/AppLayout";
 import { LeadsPage } from "./pages/LeadsPage";
 import { AdminsPage } from "./pages/AdminsPage";
 import { SettlementPage } from "./pages/SettlementPage";
 import { HistoryPage } from "./pages/HistoryPage";
+import { AppLayout } from "./components/AppLayout";
 
-// --- Helper Hook & Component ---
-export const useAuth = () => {
+const useAuth = () => {
   const [me, setMe] = useState<string | null>(null);
   const [myRole, setMyRole] = useState<"super-admin" | "admin" | "user" | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -27,7 +26,8 @@ export const useAuth = () => {
       if (user && user.email) {
         setMe(user.email);
         try {
-          const role = await getMyRoleFromFirestore(user.email);
+          // ✨ 수정: 안전한 getMyRoleCall 함수를 사용하여 등급을 확인합니다.
+          const { role } = await getMyRoleCall();
           setMyRole(role);
         } catch (e) {
           console.error("Failed to get user role:", e);
@@ -45,9 +45,9 @@ export const useAuth = () => {
   return { me, myRole, authLoading };
 };
 
-const ProtectedRoute = ({ allowedRoles, myRole }: { allowedRoles: Array<"super-admin" | "admin" | "user">; myRole: "super-admin" | "admin" | "user" | null }) => {
+const ProtectedRoute = ({ allowedRoles, myRole, children }: { children: JSX.Element; allowedRoles: Array<"super-admin" | "admin" | "user">; myRole: "super-admin" | "admin" | "user" | null }) => {
   const isAllowed = myRole && allowedRoles.includes(myRole);
-  return isAllowed ? <Outlet /> : <Navigate to='/unauthorized' replace />;
+  return isAllowed ? children : <Navigate to='/unauthorized' replace />;
 };
 
 const LoginPage = () => {
@@ -64,8 +64,7 @@ const LoginPage = () => {
   );
 };
 
-// --- Main App Component ---
-const App = () => {
+const AppRoutes = () => {
   const { me, myRole, authLoading } = useAuth();
 
   if (authLoading) {
@@ -98,17 +97,30 @@ const App = () => {
       <Route path='/' element={<AppLayout myRole={myRole} />}>
         <Route index element={<Navigate to='/dbs' replace />} />
         <Route path='dbs' element={<LeadsPage />} />
-
-        <Route element={<ProtectedRoute myRole={myRole} allowedRoles={["super-admin", "admin"]} />}>
-          {/* ✨ 수정: 타입 오류를 해결하기 위해 myRole을 확인하고 전달합니다. */}
-          <Route path='admins' element={(myRole === "super-admin" || myRole === "admin") && <AdminsPage myRole={myRole} />} />
-          <Route path='settlement' element={(myRole === "super-admin" || myRole === "admin") && <SettlementPage myRole={myRole} />} />
-        </Route>
-
-        <Route element={<ProtectedRoute myRole={myRole} allowedRoles={["super-admin"]} />}>
-          <Route path='history' element={<HistoryPage />} />
-        </Route>
-
+        <Route
+          path='admins'
+          element={
+            <ProtectedRoute myRole={myRole} allowedRoles={["super-admin", "admin"]}>
+              <AdminsPage myRole={myRole as "super-admin" | "admin"} />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path='settlement'
+          element={
+            <ProtectedRoute myRole={myRole} allowedRoles={["super-admin", "admin"]}>
+              <SettlementPage myRole={myRole as "super-admin" | "admin"} />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path='history'
+          element={
+            <ProtectedRoute myRole={myRole} allowedRoles={["super-admin"]}>
+              <HistoryPage />
+            </ProtectedRoute>
+          }
+        />
         <Route path='unauthorized' element={<Result status='403' title='403' subTitle='죄송합니다. 이 페이지에 접근할 권한이 없습니다.' />} />
         <Route path='*' element={<Result status='404' title='404' subTitle='죄송합니다. 페이지를 찾을 수 없습니다.' />} />
       </Route>
@@ -116,13 +128,12 @@ const App = () => {
   );
 };
 
-// --- Top-level Wrapper ---
-const Root = () => (
+const App = () => (
   <ConfigProvider locale={koKR}>
     <AntApp>
-      <App />
+      <AppRoutes />
     </AntApp>
   </ConfigProvider>
 );
 
-export default Root;
+export default App;

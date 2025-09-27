@@ -13,7 +13,6 @@ const LEADS = "leads";
 const HISTORY = "history";
 
 // --- Helper Functions ---
-// ✨✨✨ 최종 수정: members -> admins로 모두 되돌립니다. ✨✨✨
 const getAdminRoles = async () => {
   const adminDoc = await db.collection("_config").doc("admins").get();
   if (!adminDoc.exists) {
@@ -44,7 +43,7 @@ const ensureIsRole = async (context, allowedRoles) => {
   return { email, role: userRole };
 };
 
-
+// ... (logHistory, formatPhoneNumber functions are unchanged) ...
 const logHistory = async (action, userEmail, leadIds, details = {}) => {
   const batch = db.batch();
   const timestamp = FieldValue.serverTimestamp();
@@ -55,7 +54,6 @@ const logHistory = async (action, userEmail, leadIds, details = {}) => {
   });
   await batch.commit();
 };
-
 function formatPhoneNumber(phone) {
   const digits = String(phone).replace(/\D/g, "");
   if (digits.length === 11) return digits.replace(/(\d{3})(\d{4})(\d{4})/, "$1-$2-$3");
@@ -63,21 +61,65 @@ function formatPhoneNumber(phone) {
   return phone;
 }
 
+
 // --- Callable Functions ---
-// ✨ 수정: 함수 이름을 모두 admins로 되돌립니다.
-exports.getAdmins = onCall({ invoker: 'public' }, async (req) => {
-  await ensureIsRole(req, ['super-admin', 'admin']);
+
+// ✨✨✨ 추가: "닭이 먼저냐 달걀이 먼저냐" 문제를 해결하기 위한 전용 함수 ✨✨✨
+// 이 함수는 권한 검사 없이 로그인한 사용자의 역할만 안전하게 반환합니다.
+exports.getMyRole = onCall({ invoker: 'public' }, async (req) => {
+  const email = req.auth?.token?.email;
+  if (!email) {
+    throw new HttpsError("unauthenticated", "Authentication is required.");
+  }
   const roles = await getAdminRoles();
-  return Object.entries(roles).map(([email, role]) => ({ email, role }));
+  const normalizedEmail = email.trim().toLowerCase();
+  let role = null;
+  for (const key in roles) {
+    if (key.trim().toLowerCase() === normalizedEmail) {
+      role = roles[key];
+      break;
+    }
+  }
+  return { email, role };
 });
 
+
+exports.getAdmins = onCall({ invoker: 'public' }, async (req) => {
+  await ensureIsRole(req, ['super-admin', 'admin']);
+
+  const roles = await getAdminRoles();
+  const listUsersResult = await admin.auth().listUsers(1000);
+  const authUserMap = new Map();
+  listUsersResult.users.forEach(user => {
+    if (user.email) {
+      authUserMap.set(user.email.trim().toLowerCase(), {
+        lastSignInTime: user.metadata.lastSignInTime,
+      });
+    }
+  });
+
+  const combinedAdmins = Object.entries(roles).map(([email, role]) => {
+    const normalizedEmail = email.trim().toLowerCase();
+    const authData = authUserMap.get(normalizedEmail);
+    return {
+      email,
+      role,
+      lastSignInTime: authData ? authData.lastSignInTime : null
+    };
+  });
+
+  return combinedAdmins;
+});
+
+
+// (addAdmin, updateAdminRole, removeAdmin functions are unchanged, but now use FieldPath for safety)
 exports.addAdmin = onCall({ invoker: 'public' }, async (req) => {
   await ensureIsRole(req, ['super-admin']);
   const { email, role } = req.data;
-  if (!email || !['admin', 'user'].includes(role)) {
-    throw new HttpsError('invalid-argument', 'A valid email and role are required.');
-  }
-  await db.collection('_config').doc('admins').set({ roles: { [email]: role } }, { merge: true });
+  if (!email || !['admin', 'user'].includes(role)) throw new HttpsError('invalid-argument', 'A valid email and role are required.');
+  const docRef = db.collection('_config').doc('admins');
+  const fieldPath = new admin.firestore.FieldPath('roles', email);
+  await docRef.update({ [fieldPath]: role });
   return { ok: true };
 });
 
@@ -87,7 +129,9 @@ exports.updateAdminRole = onCall({ invoker: 'public' }, async (req) => {
   if (!email || !['admin', 'user'].includes(role)) {
     throw new HttpsError('invalid-argument', 'A valid email and role are required.');
   }
-  await db.collection('_config').doc('admins').update({ [`roles.${email}`]: role });
+  const docRef = db.collection('_config').doc('admins');
+  const fieldPath = new admin.firestore.FieldPath('roles', email);
+  await docRef.update({ [fieldPath]: role });
   return { ok: true };
 });
 
@@ -95,11 +139,13 @@ exports.removeAdmin = onCall({ invoker: 'public' }, async (req) => {
   await ensureIsRole(req, ['super-admin']);
   const { email } = req.data;
   if (!email) throw new HttpsError('invalid-argument', 'Email is required.');
-  await db.collection('_config').doc('admins').update({ [`roles.${email}`]: FieldValue.delete() });
+  const docRef = db.collection('_config').doc('admins');
+  const fieldPath = new admin.firestore.FieldPath('roles', email);
+  await docRef.update({ [fieldPath]: FieldValue.delete() });
   return { ok: true };
 });
 
-// ... (createLeadCall, deleteLeads, etc. remain unchanged) ...
+// ... (Other functions remain unchanged) ...
 exports.createLeadCall = onCall({ invoker: "public" }, async (req) => {
   const { name, phone, region, ...restData } = req.data || {};
   if (!name || !phone || !region) throw new HttpsError("invalid-argument", "name, phone, region are required.");

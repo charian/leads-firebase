@@ -11,7 +11,12 @@ import type { Lead } from "../types";
 import FiltersComponent from "../components/Filters";
 import AntLeadsTable from "../components/AntLeadsTable";
 
-export const LeadsPage = () => {
+// ✨ 수정: myRole을 props로 받도록 인터페이스를 정의합니다.
+interface LeadsPageProps {
+  myRole: "super-admin" | "admin" | "user";
+}
+
+export const LeadsPage = ({ myRole }: LeadsPageProps) => {
   const { message, modal } = AntApp.useApp();
   const { confirm } = modal;
 
@@ -49,7 +54,7 @@ export const LeadsPage = () => {
 
     try {
       await incrementDownloadsCall(chosen.map((r) => r.id));
-      await reload(); // Reload to get updated download info
+      await reload();
       message.success(`${chosen.length}건의 다운로드 정보를 업데이트했습니다.`);
     } catch (e: any) {
       message.error(`다운로드 정보 업데이트 실패: ${e?.message}`);
@@ -90,7 +95,7 @@ export const LeadsPage = () => {
       message.success("메모가 저장되었습니다.");
     } catch (e: any) {
       message.error(`메모 저장 중 오류가 발생했습니다: ${e.message}`);
-      throw e; // Propagate error to child component
+      throw e;
     }
   };
 
@@ -118,6 +123,8 @@ export const LeadsPage = () => {
         </Space>
       </div>
       <AntLeadsTable
+        // ✨ 수정: myRole을 AntLeadsTable로 전달합니다.
+        myRole={myRole}
         rows={pageRows}
         loading={loading}
         selectedRowKeys={selected}
@@ -127,7 +134,6 @@ export const LeadsPage = () => {
         total={total}
         onPageChange={(page, size) => {
           setPage(page);
-          // Optional: handle page size change if needed
         }}
         onMemoSave={handleMemoSave}
         onBadLeadToggle={handleBadLeadToggle}
