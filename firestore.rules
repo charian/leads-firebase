@@ -1,48 +1,48 @@
 rules_version = '2';
 service cloud.firestore {
-  match /databases/{db}/documents {
-    
-    // --- Helper Functions ---
-    function getRoles() {
-      return get(/databases/$(db)/documents/_config/admins).data.roles;
-    }
+match /databases/{db}/documents {
 
-    function getMyRole() {
-      return request.auth != null ? getRoles()[request.auth.token.email] : null;
-    }
+// --- Helper Functions ---
+// getRoles() 함수를 제거하고, 필요한 곳에서 직접 데이터를 가져오도록 수정
+function getMyRole() {
+  // _config/admins 문서를 직접 읽어서 역할을 반환합니다.
+  return request.auth != null ? get(/databases/$(db)/documents/_config/admins).data.roles[request.auth.token.email] : null;
+}
 
-    // --- Rules for Leads Collection ---
-    match /leads/{leadId} {
-      allow create: if request.resource.data.keys().hasAll(['name', 'phone_e164', 'createdAt']);
-      allow read, delete, update: if getMyRole() in ['super-admin', 'admin', 'user'];
-    }
+// --- Rules for Leads Collection ---
+match /leads/{leadId} {
+  allow create: if request.resource.data.keys().hasAll(['name', 'phone_e164', 'createdAt']);
+  allow read, delete, update: if getMyRole() in ['super-admin', 'admin', 'user'];
+}
 
-    // --- Rules for Config Collection ---
-    match /_config/admins {
-      // ✨✨✨ 최종 수정: "닭이 먼저냐 달걀이 먼저냐" 문제 해결 ✨✨✨
-      // 이제 앱이 Cloud Function을 통해 역할을 확인하므로, 이 규칙을 다시 강화합니다.
-      allow read: if getMyRole() in ['super-admin', 'admin'];
-      
-      // 쓰기 권한은 슈퍼어드민에게만 부여하여 안전하게 보호합니다.
-      allow write: if getRoles()[request.auth.token.email] == 'super-admin';
-    }
+// --- Rules for Config Collection ---
+match /_config/{docId} {
+  // ✅ 핵심 수정: 모든 인증된 사용자가 자신의 역할 문서를 읽을 수 있도록 허용합니다.
+  allow read: if request.auth != null; 
+  
+  // 'admins' 문서에 대한 쓰기 권한은 슈퍼어드민에게만 부여합니다.
+  match /admins {
+    allow write: if get(/databases/$(db)/documents/_config/admins).data.roles[request.auth.token.email] == 'super-admin';
+  }
 
-    // --- ✨ 추가: 정산 및 히스토리 컬렉션 규칙 ---
-    match /_config/settlement {
-        allow read: if getMyRole() in ['super-admin', 'admin'];
-        allow write: if getMyRole() == 'super-admin';
-    }
-    
-    match /history/{docId} {
-        allow read: if getMyRole() == 'super-admin';
-        allow write: if false; 
-    }
-
-    // --- Rules for Mail Collection ---
-    match /mail/{docId} {
-        allow create: if true;
-        allow read, update, delete: if false;
-    }
+  // 'settlement' 문서에 대한 읽기 및 쓰기 권한은 유지합니다.
+  match /settlement {
+    allow read: if getMyRole() in ['super-admin', 'admin'];
+    allow write: if getMyRole() == 'super-admin';
   }
 }
 
+// --- History Collection Rules ---
+match /history/{docId} {
+  allow read: if getMyRole() == 'super-admin';
+  allow write: if false;
+}
+
+// --- Rules for Mail Collection ---
+match /mail/{docId} {
+    allow create: if true;
+    allow read, update, delete: if false;
+}
+
+}
+}
