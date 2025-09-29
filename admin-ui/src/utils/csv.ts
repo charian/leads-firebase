@@ -3,26 +3,19 @@ import type { Lead } from "../types";
 
 export function leadsToCsv(rows: Lead[]): string {
   // ✨ 요청하신 대로 CSV 헤더를 수정합니다.
-  const headers = [
-    "이름",
-    "전화번호",
-    "지역",
-    "불량여부",
-    "추가시간",
-    "유입매체", // utm_source
-  ];
+  const headers = ["신청일자", "회사", "매체", "환자명", "연락처", "지역"];
 
   const lines = [headers.join(",")].concat(
     rows.map((r) => {
       // ✨ 요청하신 데이터 형식에 맞게 객체를 구성합니다.
       const { date, time } = formatKST(r.createdAt);
       const obj = {
+        createdAt: `${date} ${time}`,
+        company: "기획공장",
+        source: r.utm_source ?? "",
         name: r.name ?? "",
         phone: r.phone_raw ?? "",
         location: r.region_ko ?? "",
-        isBad: r.isBad ? "Y" : "N",
-        createdAt: `${date} ${time}`,
-        source: r.utm_source ?? "",
       };
 
       // 각 값을 CSV 형식에 맞게 변환합니다.

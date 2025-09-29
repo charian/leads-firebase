@@ -4,6 +4,7 @@ const { setGlobalOptions } = require("firebase-functions/v2");
 const admin = require("firebase-admin");
 const { getFirestore, FieldValue } = require("firebase-admin/firestore");
 const { formatInTimeZone } = require("date-fns-tz");
+const { subDays } = require("date-fns");
 
 setGlobalOptions({ region: "asia-northeast3" });
 admin.initializeApp();
@@ -43,17 +44,50 @@ const ensureIsRole = async (context, allowedRoles) => {
   return { email, role: userRole };
 };
 
-// ... (logHistory, formatPhoneNumber functions are unchanged) ...
+// ✨ 수정: logHistory 함수가 리드의 이름과 연락처를 함께 저장하도록 변경합니다.
 const logHistory = async (action, userEmail, leadIds, details = {}) => {
   const batch = db.batch();
   const timestamp = FieldValue.serverTimestamp();
   const leadIdsArray = Array.isArray(leadIds) ? leadIds : [leadIds];
-  leadIdsArray.forEach(leadId => {
-    const historyRef = db.collection(HISTORY).doc();
-    batch.set(historyRef, { action, userEmail, leadId, timestamp, ...details });
-  });
+
+  // 전달된 ID가 있을 경우에만 Firestore에서 리드 정보를 가져옵니다.
+  if (leadIdsArray.length > 0) {
+    // 1. ID 배열을 사용하여 모든 리드 문서를 한 번에 효율적으로 가져옵니다.
+    const leadRefs = leadIdsArray.map(id => db.collection(LEADS).doc(id));
+    const leadDocs = await db.getAll(...leadRefs);
+    const leadsDataMap = new Map();
+    leadDocs.forEach(doc => {
+      if (doc.exists) {
+        leadsDataMap.set(doc.id, doc.data());
+      }
+    });
+
+    // 2. 가져온 리드 정보를 포함하여 히스토리 로그를 생성합니다.
+    leadIdsArray.forEach(leadId => {
+      const historyRef = db.collection(HISTORY).doc();
+      const leadData = leadsDataMap.get(leadId);
+
+      const historyEntry = {
+        action,
+        userEmail,
+        leadId, // 나중에 참조할 수 있도록 원본 ID는 유지합니다.
+        timestamp,
+        ...details
+      };
+
+      // 리드 정보가 성공적으로 조회된 경우, 이름과 연락처를 로그에 추가합니다.
+      if (leadData) {
+        historyEntry.leadName = leadData.name;
+        historyEntry.leadPhone = leadData.phone_raw;
+      }
+
+      batch.set(historyRef, historyEntry);
+    });
+  }
+
   await batch.commit();
 };
+
 function formatPhoneNumber(phone) {
   const digits = String(phone).replace(/\D/g, "");
   if (digits.length === 11) return digits.replace(/(\d{3})(\d{4})(\d{4})/, "$1-$2-$3");
@@ -286,78 +320,101 @@ exports.getAdvancedDashboardStats = onCall({ invoker: 'public' }, async (req) =>
   // 모든 등급의 관리자가 통계를 볼 수 있도록 허용
   await ensureIsRole(req, ['super-admin', 'admin', 'user']);
 
-  // --- 1. 날짜 범위 계산 (한국 시간 기준) ---
+  // --- 1. 날짜 범위 계산 ---
   const timeZone = "Asia/Seoul";
   const now = new Date();
 
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
   const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
 
-  const yesterday = subDays(startOfToday, 1);
-  const startOfYesterday = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate(), 0, 0, 0);
-  const endOfYesterday = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate(), 23, 59, 59, 999);
+  const startOfYesterday = subDays(startOfToday, 1);
+  const endOfYesterday = subDays(endOfToday, 1);
 
-  const trendStartDate = subDays(startOfToday, 29); // 오늘 포함 총 30일 데이터
+  const trendStartDate = subDays(startOfToday, 14);
 
   // --- 2. Firestore에서 데이터 병렬 조회 ---
   const todayQuery = db.collection(LEADS).where('createdAt', '>=', startOfToday).where('createdAt', '<=', endOfToday).get();
   const yesterdayQuery = db.collection(LEADS).where('createdAt', '>=', startOfYesterday).where('createdAt', '<=', endOfYesterday).get();
   const trendQuery = db.collection(LEADS).where('createdAt', '>=', trendStartDate).get();
+  const cumulativeQuery = db.collection(LEADS).count().get();
 
-  const [todaySnapshot, yesterdaySnapshot, trendSnapshot] = await Promise.all([todayQuery, yesterdayQuery, trendQuery]);
+  const [
+    todaySnapshot,
+    yesterdaySnapshot,
+    trendSnapshot,
+    cumulativeSnapshot
+  ] = await Promise.all([
+    todayQuery,
+    yesterdayQuery,
+    trendQuery,
+    cumulativeQuery
+  ]);
 
   // --- 3. 데이터 가공 및 통계 계산 ---
 
-  // 어제 DB 통계
-  const yesterdayLeads = yesterdaySnapshot.docs.map(doc => doc.data());
-  const yesterdayStats = {
-    total: yesterdayLeads.length,
-    bad: yesterdayLeads.filter(lead => lead.isBad).length,
+  const cumulativeTotal = cumulativeSnapshot.data().count;
+
+  // --- 어제, 오늘 데이터 집계 (bySource 포함) ---
+  const processSnapshot = (snapshot) => {
+    const leads = snapshot.docs.map(doc => doc.data());
+    const bySource = leads.reduce((acc, lead) => {
+      const source = lead.utm_source || 'N/A';
+      acc[source] = (acc[source] || 0) + 1;
+      return acc;
+    }, {});
+    return {
+      total: leads.length,
+      bad: leads.filter(lead => lead.isBad).length,
+      bySource,
+    };
   };
 
-  // 오늘 DB 통계
-  const todayLeads = todaySnapshot.docs.map(doc => doc.data());
-  const todayBySource = todayLeads.reduce((acc, lead) => {
-    const source = lead.utm_source || 'N/A'; // 매체(utm_source)가 없는 경우 'N/A'로 집계
-    if (!acc[source]) {
-      acc[source] = 0;
-    }
-    acc[source]++;
-    return acc;
-  }, {});
+  const yesterdayStats = processSnapshot(yesterdaySnapshot);
+  const todayStats = processSnapshot(todaySnapshot);
 
-  const todayStats = {
-    total: todayLeads.length,
-    bad: todayLeads.filter(lead => lead.isBad).length,
-    bySource: todayBySource, // 매체별 통계 추가
-  };
+  // --- ✨ 수정: 트렌드 데이터를 매체별로 집계 ---
+  const dailyDataBySource = {};
 
-  // 일자별 DB 추가 수 추세 (Area Spline Chart용 데이터)
-  const dailyCounts = {};
-  for (let i = 0; i < 30; i++) {
+  // 1. 지난 15일간의 날짜와 모든 유입 매체 목록을 미리 준비
+  const allSources = new Set();
+  trendSnapshot.forEach(doc => {
+    allSources.add(doc.data().utm_source || 'N/A');
+  });
+
+  for (let i = 0; i < 15; i++) {
     const date = subDays(startOfToday, i);
     const dateString = formatInTimeZone(date, timeZone, 'yyyy-MM-dd');
-    dailyCounts[dateString] = 0;
+    dailyDataBySource[dateString] = { date: 0 }; // 'date' 키는 사용하지 않지만 구조 일관성을 위해 추가
+    allSources.forEach(source => {
+      dailyDataBySource[dateString][source] = 0;
+    });
   }
 
+  // 2. 실제 데이터로 카운트 집계
   trendSnapshot.forEach(doc => {
     const lead = doc.data();
     if (lead.createdAt) {
       const dateString = formatInTimeZone(lead.createdAt.toDate(), timeZone, 'yyyy-MM-dd');
-      if (dailyCounts[dateString] !== undefined) {
-        dailyCounts[dateString]++;
+      const source = lead.utm_source || 'N/A';
+      if (dailyDataBySource[dateString]) {
+        dailyDataBySource[dateString][source]++;
       }
     }
   });
 
-  const trendData = Object.keys(dailyCounts)
-    .map(date => ({ date, count: dailyCounts[date] }))
-    .sort((a, b) => new Date(a.date) - new Date(b.date)); // 날짜순으로 정렬
+  // 3. 프론트엔드 차트 형식에 맞게 데이터 변환
+  const trendData = Object.keys(dailyDataBySource)
+    .map(date => {
+      const { date: _, ...sources } = dailyDataBySource[date];
+      return { date, ...sources };
+    })
+    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
-  // --- 4. 최종 결과 반환 ---
   return {
+    cumulativeTotal,
     yesterday: yesterdayStats,
     today: todayStats,
     trend: trendData,
   };
 });
+
