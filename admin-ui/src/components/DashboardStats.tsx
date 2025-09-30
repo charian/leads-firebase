@@ -1,84 +1,114 @@
-import { Row, Col, Card, Statistic, Skeleton } from "antd";
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
-// ✨ 수정: 자체 타입 정의를 삭제하고, src/types.ts에서 올바른 타입을 import 합니다.
+// charian/leads-firebase/leads-firebase-406454682e97bd77272c4f2bfb7458eafbb2216c/admin-ui/src/components/DashboardStats.tsx
+
+import { Card, Row, Col, Spin, Alert } from "antd";
+import { AreaChart, Area, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import type { AdvancedStats } from "../types";
 
-interface DashboardStatsProps {
+const sourceColorMap = new Map<string, string>();
+const COLORS = ["#0088FE", "#00C49F", "#FFBB28", "#FF8042", "#8884d8", "#82ca9d", "#ffc658"];
+
+const getSourceColor = (source: string, index: number) => {
+  if (!sourceColorMap.has(source)) {
+    sourceColorMap.set(source, COLORS[index % COLORS.length]);
+  }
+  return sourceColorMap.get(source)!;
+};
+
+// Pie Chart를 위한 데이터 변환 함수
+const transformSourceDataForPie = (sourceData: { [key: string]: number }) => {
+  return Object.entries(sourceData).map(([name, value]) => ({ name, value }));
+};
+
+type Props = {
   stats: AdvancedStats | null;
   loading: boolean;
-}
+  error: Error | null;
+};
 
-const DashboardStats = ({ stats, loading }: DashboardStatsProps) => {
+// 작은 Pie Chart 컴포넌트
+const SourcePieChart = ({ title, data }: { title: string; data: { name: string; value: number }[] }) => (
+  <Card title={title}>
+    {/* ✨ 높이 수정: 250 -> 150 */}
+    <ResponsiveContainer width='100%' height={150}>
+      <PieChart>
+        <Pie
+          data={data}
+          cx='50%'
+          cy='50%'
+          labelLine={false}
+          outerRadius={60} // 높이에 맞춰 크기 조정
+          fill='#8884d8'
+          dataKey='value'
+          nameKey='name'
+          label={({ name, percent }) => `${name} ${((percent as number) * 100).toFixed(0)}%`}
+        >
+          {data.map((entry, index) => (
+            <Cell key={`cell-${index}`} fill={getSourceColor(entry.name, index)} />
+          ))}
+        </Pie>
+        <Tooltip />
+      </PieChart>
+    </ResponsiveContainer>
+  </Card>
+);
+
+export const DashboardStats = ({ stats, loading, error }: Props) => {
   if (loading) {
     return (
-      <Row gutter={[16, 16]} align='stretch'>
-        <Col xs={24} lg={12}>
-          <Card style={{ height: "100%" }}>
-            <Skeleton active paragraph={{ rows: 8 }} />
-          </Card>
-        </Col>
-        <Col xs={24} sm={8} lg={4}>
-          <Card style={{ height: "100%" }}>
-            <Skeleton active paragraph={{ rows: 2 }} />
-          </Card>
-        </Col>
-        <Col xs={24} sm={8} lg={4}>
-          <Card style={{ height: "100%" }}>
-            <Skeleton active paragraph={{ rows: 2 }} />
-          </Card>
-        </Col>
-        <Col xs={24} sm={8} lg={4}>
-          <Card style={{ height: "100%" }}>
-            <Skeleton active paragraph={{ rows: 2 }} />
-          </Card>
-        </Col>
-      </Row>
+      <div style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: 200 }}>
+        <Spin />
+      </div>
     );
   }
 
-  if (!stats) return null;
+  if (error) {
+    return <Alert message='데이터 로딩 실패' description={error.message} type='error' showIcon />;
+  }
 
-  const sources = stats.trend.length > 0 ? Object.keys(stats.trend[0]).filter((key) => key !== "date") : [];
-  const colors = ["#8884d8", "#82ca9d", "#ffc658", "#ff8042", "#0088FE", "#00C49F"];
-  const formattedTrendData = stats.trend.map((item) => ({ ...item, date: item.date.substring(5) }));
+  if (!stats) {
+    return <Alert message='표시할 데이터가 없습니다.' type='info' showIcon />;
+  }
+
+  const formattedTrendData = stats.trend.map((item) => ({
+    ...item,
+    date: item.date.substring(5),
+  }));
 
   return (
-    <Row gutter={[16, 16]} align='stretch'>
-      <Col xs={24} lg={12}>
-        <Card title='최근 15일 DB 추가 수 (매체별)' style={{ height: "100%" }}>
-          <div style={{ height: 250 }}>
-            <ResponsiveContainer width='100%' height='100%'>
-              <AreaChart data={formattedTrendData} margin={{ top: 5, right: 20, left: -10, bottom: 5 }}>
-                <CartesianGrid strokeDasharray='3 3' />
-                <XAxis dataKey='date' />
-                <YAxis allowDecimals={false} />
-                <Tooltip />
-                <Legend />
-                {sources.map((source, index) => (
-                  <Area key={source} type='monotone' dataKey={source} stackId='1' name={source} stroke={colors[index % colors.length]} fill={colors[index % colors.length]} />
-                ))}
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
+    <Row gutter={[24, 24]}>
+      {/* ✨ 너비 수정: 40% (span 10/24) */}
+      <Col xs={24} xl={10}>
+        <Card title='지난 30일 유입 추이'>
+          {/* ✨ 높이 수정: 250 -> 150 */}
+          <ResponsiveContainer width='100%' height={150}>
+            <AreaChart data={formattedTrendData}>
+              <CartesianGrid strokeDasharray='3 3' />
+              <XAxis dataKey='date' fontSize={12} />
+              <YAxis fontSize={12} />
+              <Tooltip />
+              <Legend wrapperStyle={{ fontSize: "12px" }} />
+              {stats.sources.map((source, index) => (
+                <Area key={source} type='monotone' dataKey={source} stackId='1' stroke={getSourceColor(source, index)} fill={getSourceColor(source, index)} />
+              ))}
+            </AreaChart>
+          </ResponsiveContainer>
         </Card>
       </Col>
-      <Col xs={24} sm={8} lg={4}>
-        <Card style={{ height: "100%" }}>
-          <Statistic title='오늘 DB 추가 수' value={stats.today?.total || 0} />
-        </Card>
+
+      {/* ✨ 너비 수정: 20% (span 5/24) */}
+      <Col xs={24} sm={12} xl={5}>
+        <SourcePieChart title={`오늘 DB (${stats.today.total}건)`} data={transformSourceDataForPie(stats.today.bySource)} />
       </Col>
-      <Col xs={24} sm={8} lg={4}>
-        <Card style={{ height: "100%" }}>
-          <Statistic title='어제 DB 추가 수' value={stats.yesterday?.total || 0} />
-        </Card>
+
+      {/* ✨ 너비 수정: 20% (span 5/24) */}
+      <Col xs={24} sm={12} xl={5}>
+        <SourcePieChart title={`어제 DB (${stats.yesterday.total}건)`} data={transformSourceDataForPie(stats.yesterday.bySource)} />
       </Col>
-      <Col xs={24} sm={8} lg={4}>
-        <Card style={{ height: "100%" }}>
-          <Statistic title='누적 DB' value={stats.cumulativeTotal || 0} />
-        </Card>
+
+      {/* ✨ 너비 수정: 20% (span 4/24, to fit) */}
+      <Col xs={24} xl={4}>
+        <SourcePieChart title={`누적 DB (${stats.cumulativeTotal}건)`} data={transformSourceDataForPie(stats.cumulativeBySource)} />
       </Col>
     </Row>
   );
 };
-
-export default DashboardStats;

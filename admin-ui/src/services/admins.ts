@@ -37,3 +37,8 @@ export async function removeAdminCall(email: string) {
   const fn = httpsCallable(functions, "removeAdmin");
   await fn({ email });
 }
+
+export async function updateAdminNotificationsCall(email: string, field: "notifyOnNewLead" | "notifyOnDailySummary", value: boolean) {
+  const fn = httpsCallable(functions, "updateAdminNotifications");
+  await fn({ email, field, value });
+}

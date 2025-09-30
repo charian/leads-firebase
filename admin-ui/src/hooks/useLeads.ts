@@ -1,69 +1,96 @@
-import { useState } from "react";
-// ✨ 수정: react-router-dom 의존성을 제거하고, 불필요한 useEffect도 제거합니다.
-import type { Lead, Filters } from "../types";
+// charian/leads-firebase/leads-firebase-406454682e97bd77272c4f2bfb7458eafbb2216c/admin-ui/src/hooks/useLeads.ts
+
+import { useState, useMemo, useEffect } from "react";
 import dayjs from "dayjs";
+import { useSearchParams } from "react-router-dom";
+import type { Lead, Filters } from "../types";
 
-export function useLeads(source: Lead[]) {
-  // ✨ 수정: useSearchParams 대신 브라우저 기본 API를 사용합니다.
-  const searchParams = new URLSearchParams(window.location.search);
+// ✨ 수정: 기본 조회 기간을 최근 7일로 설정합니다.
+const initialFilters: Filters = {
+  dateRange: [dayjs().subtract(6, "day"), dayjs()],
+  status: "all",
+  dl: "all",
+  name: "",
+  phone: "",
+};
 
-  const [filters, setFilters] = useState<Filters>({
-    dateRange: [searchParams.get("start") ? dayjs(searchParams.get("start")) : dayjs().startOf("day"), searchParams.get("end") ? dayjs(searchParams.get("end")) : dayjs().endOf("day")],
-    status: (searchParams.get("status") as Filters["status"]) || "all",
-    dl: (searchParams.get("dl") as Filters["dl"]) || "all",
-    name: searchParams.get("name") || "",
-    phone: searchParams.get("phone") || "",
+export const useLeads = (rows: Lead[]) => {
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const [filters, setFilters] = useState<Filters>(() => {
+    const params = Object.fromEntries(searchParams.entries());
+    const newFilters = { ...initialFilters };
+    if (params.startDate && params.endDate) {
+      newFilters.dateRange = [dayjs(params.startDate), dayjs(params.endDate)];
+    }
+    if (params.status) newFilters.status = params.status as Filters["status"];
+    if (params.dl) newFilters.dl = params.dl as Filters["dl"];
+    if (params.name) newFilters.name = params.name;
+    if (params.phone) newFilters.phone = params.phone;
+    return newFilters;
   });
 
   const [page, setPage] = useState(1);
   const pageSize = 50;
 
-  const filtered = source.filter((r) => {
-    if (filters.name && !(r.name || "").toLowerCase().includes(filters.name.toLowerCase())) {
-      return false;
-    }
-    const phoneDigits = filters.phone.replace(/\D/g, "");
-    if (phoneDigits && !(r.phone_raw || "").replace(/\D/g, "").includes(phoneDigits)) {
-      return false;
-    }
-    if (filters.status === "good" && r.isBad) return false;
-    if (filters.status === "bad" && !r.isBad) return false;
+  const filteredRows = useMemo(() => {
+    return rows.filter((row) => {
+      if (filters.dateRange && filters.dateRange[0] && filters.dateRange[1]) {
+        const rowDate = dayjs(row.createdAt.toDate());
+        if (rowDate.isBefore(filters.dateRange[0], "day") || rowDate.isAfter(filters.dateRange[1], "day")) {
+          return false;
+        }
+      }
+      if (filters.status !== "all") {
+        const isBad = filters.status === "bad";
+        if (row.isBad !== isBad) return false;
+      }
+      if (filters.dl !== "all") {
+        const hasDownloaded = filters.dl === "yes";
+        if (!!row.downloadedAt !== hasDownloaded) return false;
+      }
+      if (filters.name && !row.name.includes(filters.name)) {
+        return false;
+      }
+      if (filters.phone) {
+        const phoneDigits = filters.phone.replace(/\D/g, "");
+        if (!row.phone_raw.replace(/\D/g, "").includes(phoneDigits)) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [rows, filters]);
 
-    const downloadCount = Number(r.download || 0);
-    if (filters.dl === "yes" && downloadCount === 0) return false;
-    if (filters.dl === "no" && downloadCount > 0) return false;
+  const pageRows = useMemo(() => {
+    return filteredRows.slice((page - 1) * pageSize, page * pageSize);
+  }, [filteredRows, page, pageSize]);
 
-    if (filters.dateRange && r.createdAt) {
-      const leadDate = dayjs(r.createdAt.toDate());
-      const [start, end] = filters.dateRange;
-      if (start && leadDate.isBefore(start, "day")) return false;
-      if (end && leadDate.isAfter(end, "day")) return false;
-    }
-
-    return true;
-  });
-
-  const total = filtered.length;
-  const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  const pageRows = filtered.slice((page - 1) * pageSize, page * pageSize);
-
-  const updateFilters = (patch: Partial<Filters>) => {
-    const newFilters = { ...filters, ...patch };
-    setFilters(newFilters);
+  const updateFilters = (newFilters: Partial<Filters>) => {
     setPage(1);
-
-    const params = new URLSearchParams();
-    if (newFilters.dateRange) {
-      if (newFilters.dateRange[0]) params.set("start", newFilters.dateRange[0].format("YYYY-MM-DD"));
-      if (newFilters.dateRange[1]) params.set("end", newFilters.dateRange[1].format("YYYY-MM-DD"));
-    }
-    if (newFilters.status !== "all") params.set("status", newFilters.status);
-    if (newFilters.dl !== "all") params.set("dl", newFilters.dl);
-    if (newFilters.name) params.set("name", newFilters.name);
-    if (newFilters.phone) params.set("phone", newFilters.phone);
-
-    window.history.replaceState({}, "", `${window.location.pathname}?${params.toString()}`);
+    setFilters((prev) => ({ ...prev, ...newFilters }));
   };
 
-  return { filters, updateFilters, page, setPage, total, totalPages, pageRows, pageSize };
-}
+  useEffect(() => {
+    const params: Record<string, string> = {};
+    if (filters.dateRange && filters.dateRange[0] && filters.dateRange[1]) {
+      params.startDate = filters.dateRange[0].format("YYYY-MM-DD");
+      params.endDate = filters.dateRange[1].format("YYYY-MM-DD");
+    }
+    if (filters.status !== "all") params.status = filters.status;
+    if (filters.dl !== "all") params.dl = filters.dl;
+    if (filters.name) params.name = filters.name;
+    if (filters.phone) params.phone = filters.phone;
+    setSearchParams(params, { replace: true });
+  }, [filters, setSearchParams]);
+
+  return {
+    filters,
+    updateFilters,
+    page,
+    setPage,
+    total: filteredRows.length,
+    pageRows,
+    pageSize,
+  };
+};

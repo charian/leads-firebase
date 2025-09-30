@@ -1,3 +1,5 @@
+// charian/leads-firebase/leads-firebase-406454682e97bd77272c4f2bfb7458eafbb2216c/admin-ui/src/services/leads.ts
+
 import { collection, getDocs, doc, updateDoc } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
 import { db, functions } from "./firebase";
@@ -13,13 +15,13 @@ export async function fetchLeads(): Promise<Lead[]> {
   return leads.sort((a, b) => b.createdAt.toMillis() - a.createdAt.toMillis());
 }
 
-// ✨ 수정: oldMemo 인자를 추가로 받도록 함수 정의를 변경합니다.
 export async function updateLeadMemo(leadId: string, memo: string, oldMemo: string) {
   const updateMemo = httpsCallable(functions, "updateMemoAndLog");
   await updateMemo({ leadId, memo, oldMemo });
 }
 
-export async function setLeadBadStatus(leadId: string, isBad: boolean) {
-  const leadRef = doc(db, "leads", leadId);
-  await updateDoc(leadRef, { isBad });
+// ✨ 수정: 범용 상태 업데이트 함수 호출
+export async function setLeadStatus(leadId: string, field: "isBad" | "visited" | "procedure", status: boolean) {
+  const fn = httpsCallable(functions, "setLeadStatus");
+  await fn({ leadId, field, status });
 }

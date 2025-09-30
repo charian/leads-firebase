@@ -1,5 +1,7 @@
+// charian/leads-firebase/leads-firebase-406454682e97bd77272c4f2bfb7458eafbb2216c/admin-ui/src/types.ts
+
 import type { Dayjs } from "dayjs";
-import { Timestamp } from "firebase/firestore";
+import type { Timestamp } from "firebase/firestore";
 
 export interface Lead {
   id: string;
@@ -13,12 +15,29 @@ export interface Lead {
   downloadedBy?: string;
   isBad: boolean;
   memo: string;
-  [key: string]: any; // for utm_source etc.
+
+  // ✨ 추가: 내원 및 시술 여부 필드
+  visited?: boolean;
+  procedure?: boolean;
+
+  utm_source?: string;
+  utm_medium?: string;
+  utm_campaign?: string;
+  referrer?: string;
+  ga_client_id?: string;
+
+  // ✨ 추가: IP 및 도시 정보 필드
+  ipAddress?: string;
+  ipCity?: string;
+
+  [key: string]: any;
 }
 
 export interface Admin {
   email: string;
   role: "super-admin" | "admin" | "user";
+  notifyOnNewLead: boolean;
+  notifyOnDailySummary: boolean;
 }
 
 export interface Filters {
@@ -45,21 +64,24 @@ export interface HistoryLog {
   leadPhone?: string;
 }
 
-// ✨ 수정: 프로젝트 전체에서 사용할 유일한 AdvancedStats 타입 정의
+export interface TrendDataPoint {
+  date: string;
+  [key: string]: string | number;
+}
+
 export interface AdvancedStats {
-  cumulativeTotal: number;
   yesterday: {
     total: number;
     bad: number;
-    bySource: Record<string, number>;
+    bySource: { [key: string]: number };
   };
   today: {
     total: number;
     bad: number;
-    bySource: Record<string, number>;
+    bySource: { [key: string]: number };
   };
-  // 매체별 누적 차트를 위한 데이터 구조
-  trend: ({
-    date: string;
-  } & Record<string, number>)[];
+  trend: TrendDataPoint[];
+  cumulativeTotal: number;
+  sources: string[];
+  cumulativeBySource: { [key: string]: number };
 }

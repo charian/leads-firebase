@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import { App, Button, Space, Card, Input, List, Popconfirm, Tag, Select } from "antd";
+import { App, Button, Space, Card, Input, List, Popconfirm, Tag, Select, Switch, Typography } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
-import { getAdminsCall, addAdminCall, removeAdminCall, updateAdminRoleCall } from "../services/admins";
+import { getAdminsCall, addAdminCall, removeAdminCall, updateAdminRoleCall, updateAdminNotificationsCall } from "../services/admins";
 import type { Admin } from "../types";
 
+const { Text } = Typography;
 interface AdminsPageProps {
   myRole: "super-admin" | "admin";
 }
@@ -69,6 +70,17 @@ export const AdminsPage = ({ myRole }: AdminsPageProps) => {
     }
   };
 
+  const handleNotificationChange = async (email: string, field: "notifyOnNewLead" | "notifyOnDailySummary", value: boolean) => {
+    try {
+      await updateAdminNotificationsCall(email, field, value);
+      setAdmins((prev) => prev.map((admin) => (admin.email === email ? { ...admin, [field]: value } : admin)));
+      message.success("알림 설정이 변경되었습니다.");
+    } catch (e: any) {
+      message.error(`알림 설정 변경에 실패했습니다: ${e.message}`);
+      await fetchAdmins(); // 실패 시 데이터 다시 불러오기
+    }
+  };
+
   const isSuperAdmin = myRole === "super-admin";
 
   return (
@@ -106,6 +118,19 @@ export const AdminsPage = ({ myRole }: AdminsPageProps) => {
             }
           >
             <List.Item.Meta title={admin.email} description={<Tag color={admin.role === "super-admin" ? "red" : admin.role === "admin" ? "geekblue" : "default"}>{admin.role}</Tag>} />
+            {/* ✨ 추가: 이메일 수신 여부 설정 UI */}
+            {isSuperAdmin && (
+              <Space size='large'>
+                <Space>
+                  <Text>신규알림</Text>
+                  <Switch checked={admin.notifyOnNewLead} onChange={(checked) => handleNotificationChange(admin.email, "notifyOnNewLead", checked)} disabled={admin.role === "super-admin"} />
+                </Space>
+                <Space>
+                  <Text>일일요약</Text>
+                  <Switch checked={admin.notifyOnDailySummary} onChange={(checked) => handleNotificationChange(admin.email, "notifyOnDailySummary", checked)} disabled={admin.role === "super-admin"} />
+                </Space>
+              </Space>
+            )}
           </List.Item>
         )}
       />
