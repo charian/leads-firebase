@@ -1,6 +1,6 @@
 // charian/leads-firebase/leads-firebase-406454682e97bd77272c4f2bfb7458eafbb2216c/functions/index.js
 
-const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { onCall, HttpsError, onRequest } = require("firebase-functions/v2/https");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { setGlobalOptions } = require("firebase-functions/v2");
 const { onDocumentCreated, onDocumentUpdated } = require("firebase-functions/v2/firestore");
@@ -508,6 +508,8 @@ exports.getAdvancedDashboardStats = onCall({ invoker: 'public' }, async (req) =>
   };
 });
 
+
+// ✨ [수정됨] gclid 대신 ga_client_id를 사용하여 BigQuery에서 데이터를 가져오는 함수
 exports.enrichLeadDataFromBigQuery = onDocumentCreated("leads/{leadId}", async (event) => {
   const snapshot = event.data;
   if (!snapshot) {
@@ -515,29 +517,39 @@ exports.enrichLeadDataFromBigQuery = onDocumentCreated("leads/{leadId}", async (
     return;
   }
   const leadData = snapshot.data();
-  const gclid = leadData.gclid;
 
-  if (!gclid) {
-    console.log(`Lead ${snapshot.id} has no gclid. Skipping.`);
+  // gclid 대신 ga_client_id를 사용합니다.
+  const gaClientId = leadData.ga_client_id;
+
+  if (!gaClientId) {
+    console.log(`Lead ${snapshot.id} has no ga_client_id. Skipping.`);
     return;
   }
 
+  // GA4 BigQuery Export 스키마의 user_pseudo_id는 client_id와 동일합니다.
+  // client_id에 포함된 '.' 뒷부분은 timestamp이므로, 앞부분만 사용합니다.
+  const userPseudoId = gaClientId.split('.')[0] + '.' + gaClientId.split('.')[1];
+
   const table = "`planplant-database.analytics_373516361.events_*`";
 
+  // user_pseudo_id를 기반으로 트래픽 소스를 찾는 쿼리로 변경합니다.
   const query = `
       SELECT
-          (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'source') as source,
-          (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'medium') as medium,
-          (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'campaign') as campaign
+          traffic_source.source as source,
+          traffic_source.medium as medium,
+          traffic_source.name as campaign
       FROM
           ${table}
       WHERE
-          (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'gclid') = @gclid
+          user_pseudo_id = @userPseudoId
+          AND event_name = 'session_start' -- 세션 시작 이벤트를 기준으로 유입 소스를 찾습니다.
+      ORDER BY
+          event_timestamp DESC -- 가장 최근 세션 정보를 사용합니다.
       LIMIT 1`;
 
   const options = {
     query: query,
-    params: { gclid: gclid },
+    params: { userPseudoId: userPseudoId },
   };
 
   try {
@@ -546,17 +558,87 @@ exports.enrichLeadDataFromBigQuery = onDocumentCreated("leads/{leadId}", async (
     if (rows.length > 0) {
       const campaignData = rows[0];
       const updateData = {
-        utm_source: campaignData.source || 'google',
-        utm_medium: campaignData.medium || 'cpc',
+        utm_source: campaignData.source || '(not set)',
+        utm_medium: campaignData.medium || '(not set)',
         utm_campaign: campaignData.campaign || '(not set)',
       };
 
       await snapshot.ref.update(updateData);
-      console.log(`Successfully enriched lead ${snapshot.id} with data:`, updateData);
+      console.log(`Successfully enriched lead ${snapshot.id} with data from ga_client_id:`, updateData);
     } else {
-      console.log(`No campaign data found in BigQuery for gclid: ${gclid}`);
+      console.log(`No campaign data found in BigQuery for ga_client_id: ${gaClientId}`);
     }
   } catch (e) {
-    console.error(`Error enriching lead ${snapshot.id} from BigQuery:`, e);
+    console.error(`Error enriching lead ${snapshot.id} from BigQuery using ga_client_id:`, e);
   }
 });
+
+exports.createLeadFromPostback = onRequest(
+  {
+    region: "asia-northeast3",
+    cors: true,
+    memory: "512MiB" // 메모리 설정은 유지합니다.
+  },
+  async (req, res) => {
+    // ✨ [추가] 함수 시작과 함께 들어온 데이터를 바로 로그로 출력합니다.
+    console.log("Postback received. Method:", req.method);
+    console.log("Query parameters:", JSON.stringify(req.query));
+    console.log("Body:", JSON.stringify(req.body));
+
+    const data = req.method === "POST" ? req.body : req.query;
+    const ip = req.ip || req.headers['x-forwarded-for'] || req.headers['connection'].remoteAddress;
+    const geo = geoip.lookup(ip);
+
+    // ATOMOS가 보내주는 파라미터 이름에 맞춰 수정해야 할 수 있습니다. (예: phone -> tel)
+    const { name, phone, region, gclid, atTrackId, ...restData } = data || {};
+
+    if (!name || !phone || !region) {
+      console.error("Validation failed: name, phone, or region is missing.", data);
+      return res.status(400).json({ error: "name, phone, region are required" });
+    }
+
+    try {
+      const phoneDigits = String(phone).replace(/\D/g, "");
+      if (!/^01[016789]\d{7,8}$/.test(phoneDigits)) {
+        console.error("Validation failed: Invalid phone number format.", { phone });
+        return res.status(400).json({ error: "Invalid phone number format." });
+      }
+      const phoneE164 = "+82" + phoneDigits.substring(1);
+
+      const snapshot = await db.collection(LEADS).where("phone_e164", "==", phoneE164).limit(1).get();
+      if (!snapshot.empty) {
+        console.log("Duplicate phone number found:", phoneE164);
+        return res.status(409).json({ error: "This phone number is already registered." });
+      }
+
+      const newLeadRef = db.collection(LEADS).doc();
+      const newLead = {
+        id: newLeadRef.id,
+        name: String(name).trim(),
+        phone_raw: formatPhoneNumber(phone),
+        phone_e164: phoneE164,
+        region_ko: region,
+        gclid: gclid || null,
+        atTrackId: atTrackId || null,
+        ...restData,
+        createdAt: FieldValue.serverTimestamp(),
+        ipAddress: ip,
+        ipCity: geo ? `${geo.country}, ${geo.city}` : 'Unknown',
+        download: 0,
+        isBad: false,
+        memo: "",
+        visited: false,
+        procedure: false,
+      };
+
+      await newLeadRef.set(newLead);
+      console.log("Successfully created lead:", newLeadRef.id);
+
+      return res.status(200).json({ ok: true, id: newLeadRef.id });
+
+    } catch (err) {
+      console.error("Error during lead creation process:", err);
+      return res.status(500).json({ error: "Internal server error" });
+    }
+  }
+);
