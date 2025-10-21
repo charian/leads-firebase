@@ -1,15 +1,16 @@
-// charian/leads-firebase/leads-firebase-406454682e97bd77272c4f2bfb7458eafbb2216c/functions/index.js
+// charian/leads-firebase/leads-firebase-055a667c5c853ad85aee2ec7f79d21492d3b2ea1/functions/index.js (안정화 최종본)
 
 const { onCall, HttpsError, onRequest } = require("firebase-functions/v2/https");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { setGlobalOptions } = require("firebase-functions/v2");
-const { onDocumentCreated, onDocumentUpdated } = require("firebase-functions/v2/firestore");
+const { onDocumentCreated } = require("firebase-functions/v2/firestore");
 const admin = require("firebase-admin");
 const { getFirestore, FieldValue } = require("firebase-admin/firestore");
 const { formatInTimeZone } = require("date-fns-tz");
-const { subDays } = require("date-fns");
+const { subDays, startOfWeek, startOfMonth } = require("date-fns");
 const { BigQuery } = require("@google-cloud/bigquery");
 const geoip = require("geoip-lite");
+const axios = require("axios");
 
 setGlobalOptions({ region: "asia-northeast3" });
 admin.initializeApp();
@@ -18,6 +19,7 @@ const bigquery = new BigQuery();
 const db = getFirestore("customer-database");
 const LEADS = "leads";
 const HISTORY = "history";
+const AD_COSTS = "ad_costs";
 
 // --- Helper Functions ---
 const getAdminRoles = async () => {
@@ -29,8 +31,8 @@ const getAdminRoles = async () => {
   return adminDoc.data() || { roles: {} };
 };
 
-const ensureIsRole = async (context, allowedRoles) => {
-  const email = context.auth?.token?.email;
+const ensureIsRole = async (req, allowedRoles) => {
+  const email = req.auth?.token?.email;
   if (!email) throw new HttpsError("unauthenticated", "Authentication required.");
 
   const adminConfig = await getAdminRoles();
@@ -38,7 +40,6 @@ const ensureIsRole = async (context, allowedRoles) => {
   const normalizedEmail = email.trim().toLowerCase();
   let userRole = null;
 
-  // ✨ (버그 해결) Firestore에 저장된 이메일 키도 소문자로 비교
   for (const key in roles) {
     if (key.trim().toLowerCase() === normalizedEmail) {
       userRole = roles[key];
@@ -186,7 +187,7 @@ exports.createLeadCall = onCall({ invoker: "public" }, async (req) => {
   const ip = req.ip || req.rawRequest.headers['x-forwarded-for'] || req.rawRequest.connection.remoteAddress;
   const geo = geoip.lookup(ip);
 
-  const { name, phone, region, ...restData } = req.data || {};
+  const { name, phone, region, referrer, ...restData } = req.data || {};
   if (!name || !phone || !region) throw new HttpsError("invalid-argument", "name, phone, region are required.");
 
   const phoneDigits = String(phone).replace(/\D/g, "");
@@ -202,6 +203,7 @@ exports.createLeadCall = onCall({ invoker: "public" }, async (req) => {
     phone_raw: formatPhoneNumber(phone),
     phone_e164: phoneE164,
     region_ko: region,
+    referrer: referrer || "",
     ...restData,
     createdAt: FieldValue.serverTimestamp(),
     ipAddress: ip,
@@ -230,7 +232,8 @@ exports.createLeadCall = onCall({ invoker: "public" }, async (req) => {
         html: `<h3>상담신청 정보</h3>
                  <p><strong>이름 :</strong> ${newLead.name}</p>
                  <p><strong>연락처 :</strong> ${newLead.phone_raw}</p>
-                 <p><strong>지역 :</strong> ${newLead.region_ko}</p>`,
+                 <p><strong>지역 :</strong> ${newLead.region_ko}</p>
+                 <p><strong>유입경로 :</strong> ${newLead.referrer || '직접 유입'}</p>`,
       },
     });
   }
@@ -436,12 +439,12 @@ exports.getAdvancedDashboardStats = onCall({ invoker: 'public' }, async (req) =>
 
   const trendStartDate = subDays(startOfToday, 29);
 
-  const todayQuery = db.collection(LEADS).where('createdAt', '>=', startOfToday).where('createdAt', '<=', endOfToday).get();
-  const yesterdayQuery = db.collection(LEADS).where('createdAt', '>=', startOfYesterday).where('createdAt', '<=', endOfYesterday).get();
-  const trendQuery = db.collection(LEADS).where('createdAt', '>=', trendStartDate).get();
-  const totalLeadsQuery = db.collection(LEADS).count().get();
-
-  const [todaySnapshot, yesterdaySnapshot, trendSnapshot, totalLeadsSnapshot] = await Promise.all([todayQuery, yesterdayQuery, trendQuery, totalLeadsQuery]);
+  const [todaySnapshot, yesterdaySnapshot, trendSnapshot, totalLeadsSnapshot] = await Promise.all([
+    db.collection(LEADS).where('createdAt', '>=', startOfToday).where('createdAt', '<=', endOfToday).get(),
+    db.collection(LEADS).where('createdAt', '>=', startOfYesterday).where('createdAt', '<=', endOfYesterday).get(),
+    db.collection(LEADS).where('createdAt', '>=', trendStartDate).get(),
+    db.collection(LEADS).count().get()
+  ]);
 
   const reduceBySource = (acc, lead) => {
     const source = lead.utm_source || 'N/A';
@@ -508,8 +511,6 @@ exports.getAdvancedDashboardStats = onCall({ invoker: 'public' }, async (req) =>
   };
 });
 
-
-// ✨ [수정됨] gclid 대신 ga_client_id를 사용하여 BigQuery에서 데이터를 가져오는 함수
 exports.enrichLeadDataFromBigQuery = onDocumentCreated("leads/{leadId}", async (event) => {
   const snapshot = event.data;
   if (!snapshot) {
@@ -518,7 +519,6 @@ exports.enrichLeadDataFromBigQuery = onDocumentCreated("leads/{leadId}", async (
   }
   const leadData = snapshot.data();
 
-  // gclid 대신 ga_client_id를 사용합니다.
   const gaClientId = leadData.ga_client_id;
 
   if (!gaClientId) {
@@ -526,13 +526,10 @@ exports.enrichLeadDataFromBigQuery = onDocumentCreated("leads/{leadId}", async (
     return;
   }
 
-  // GA4 BigQuery Export 스키마의 user_pseudo_id는 client_id와 동일합니다.
-  // client_id에 포함된 '.' 뒷부분은 timestamp이므로, 앞부분만 사용합니다.
   const userPseudoId = gaClientId.split('.')[0] + '.' + gaClientId.split('.')[1];
 
   const table = "`planplant-database.analytics_373516361.events_*`";
 
-  // user_pseudo_id를 기반으로 트래픽 소스를 찾는 쿼리로 변경합니다.
   const query = `
       SELECT
           traffic_source.source as source,
@@ -542,9 +539,9 @@ exports.enrichLeadDataFromBigQuery = onDocumentCreated("leads/{leadId}", async (
           ${table}
       WHERE
           user_pseudo_id = @userPseudoId
-          AND event_name = 'session_start' -- 세션 시작 이벤트를 기준으로 유입 소스를 찾습니다.
+          AND event_name = 'session_start'
       ORDER BY
-          event_timestamp DESC -- 가장 최근 세션 정보를 사용합니다.
+          event_timestamp DESC
       LIMIT 1`;
 
   const options = {
@@ -577,10 +574,9 @@ exports.createLeadFromPostback = onRequest(
   {
     region: "asia-northeast3",
     cors: true,
-    memory: "512MiB" // 메모리 설정은 유지합니다.
+    memory: "512MiB"
   },
   async (req, res) => {
-    // ✨ [추가] 함수 시작과 함께 들어온 데이터를 바로 로그로 출력합니다.
     console.log("Postback received. Method:", req.method);
     console.log("Query parameters:", JSON.stringify(req.query));
     console.log("Body:", JSON.stringify(req.body));
@@ -589,7 +585,6 @@ exports.createLeadFromPostback = onRequest(
     const ip = req.ip || req.headers['x-forwarded-for'] || req.headers['connection'].remoteAddress;
     const geo = geoip.lookup(ip);
 
-    // ATOMOS가 보내주는 파라미터 이름에 맞춰 수정해야 할 수 있습니다. (예: phone -> tel)
     const { name, phone, region, gclid, atTrackId, ...restData } = data || {};
 
     if (!name || !phone || !region) {
@@ -642,3 +637,251 @@ exports.createLeadFromPostback = onRequest(
     }
   }
 );
+
+exports.setAdCost = onCall({ invoker: 'public' }, async (req) => {
+  await ensureIsRole(req, ['super-admin']);
+  const { date, source, cost } = req.data;
+
+  if (!date || !source || typeof cost !== 'number' || cost < 0) {
+    throw new HttpsError('invalid-argument', 'date, source, and a non-negative cost are required.');
+  }
+
+  const docRef = db.collection(AD_COSTS).doc(date);
+  await docRef.set({ [source]: cost }, { merge: true });
+
+  return { ok: true };
+});
+
+exports.getRoasData = onCall({ invoker: 'public' }, async (req) => {
+  await ensureIsRole(req, ['super-admin']);
+  const { startDate, endDate } = req.data;
+  if (!startDate || !endDate) {
+    throw new HttpsError('invalid-argument', 'startDate and endDate are required.');
+  }
+
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  const timeZone = 'Asia/Seoul';
+
+  // --- 1. 데이터 조회 (효율적으로) ---
+  const [leadsSnap, adCostsSnap, settlementDoc] = await Promise.all([
+    db.collection(LEADS).where('createdAt', '>=', start).where('createdAt', '<=', end).get(),
+    db.collection(AD_COSTS)
+      .where(admin.firestore.FieldPath.documentId(), '>=', formatInTimeZone(start, timeZone, 'yyyy-MM-dd'))
+      .where(admin.firestore.FieldPath.documentId(), '<=', formatInTimeZone(end, timeZone, 'yyyy-MM-dd'))
+      .get(),
+    db.collection('_config').doc('settlement').get()
+  ]);
+  const costsConfig = settlementDoc.exists ? settlementDoc.data().costs : {};
+
+  // --- 2. 데이터 가공 ---
+  const combinedData = {};
+  const allSourcesInPeriod = new Set();
+
+  leadsSnap.docs.forEach(doc => {
+    const lead = doc.data();
+    const dateStr = formatInTimeZone(lead.createdAt.toDate(), timeZone, 'yyyy-MM-dd');
+    const source = lead.utm_source || 'N/A';
+    allSourcesInPeriod.add(source);
+    const key = `${dateStr}|${source}`;
+    if (!combinedData[key]) combinedData[key] = { leads: 0, revenue: 0, cost: 0 };
+    const year = String(lead.createdAt.toDate().getFullYear());
+    const costPerLead = costsConfig[year] || 0;
+    combinedData[key].leads += 1;
+    combinedData[key].revenue += costPerLead;
+  });
+
+  adCostsSnap.docs.forEach(doc => {
+    const dateStr = doc.id;
+    const costs = doc.data();
+    for (const source in costs) {
+      allSourcesInPeriod.add(source);
+      const key = `${dateStr}|${source}`;
+      if (!combinedData[key]) combinedData[key] = { leads: 0, revenue: 0, cost: 0 };
+      combinedData[key].cost += Number(costs[source] || 0);
+    }
+  });
+
+  // --- 3. 모든 날짜와 매체 조합으로 최종 데이터 생성 ---
+  const roasData = [];
+  if (allSourcesInPeriod.size === 0) { allSourcesInPeriod.add("N/A"); }
+
+  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+    const dateStr = formatInTimeZone(d, timeZone, 'yyyy-MM-dd');
+    allSourcesInPeriod.forEach(source => {
+      const key = `${dateStr}|${source}`;
+      const data = combinedData[key] || {};
+      roasData.push({
+        date: dateStr,
+        source: source,
+        cost: data.cost || 0,
+        leads: data.leads || 0,
+        revenue: data.revenue || 0,
+        roas: (data.cost > 0) ? ((data.revenue || 0) / data.cost) * 100 : 0
+      });
+    });
+  }
+
+  // --- 4. 핵심 지표 및 트렌드 데이터 (효율적으로 재구현) ---
+  const today = new Date();
+
+  // 광고비 트렌드 데이터 (최근 30일)
+  const trendStartDate = subDays(today, 29);
+  const trendCostsSnap = await db.collection(AD_COSTS)
+    .where(admin.firestore.FieldPath.documentId(), '>=', formatInTimeZone(trendStartDate, timeZone, 'yyyy-MM-dd'))
+    .where(admin.firestore.FieldPath.documentId(), '<=', formatInTimeZone(today, timeZone, 'yyyy-MM-dd'))
+    .get();
+  const trendCosts = {};
+  trendCostsSnap.forEach(doc => {
+    trendCosts[doc.id] = Object.values(doc.data()).reduce((sum, val) => sum + Number(val || 0), 0);
+  });
+  const trendData = Array.from({ length: 30 }).map((_, i) => {
+    const date = subDays(today, 29 - i);
+    const dateStr = formatInTimeZone(date, timeZone, 'yyyy-MM-dd');
+    return { date: dateStr, cost: trendCosts[dateStr] || 0 };
+  });
+
+  // 주간/월간 리드당 비용 계산
+  const weekStart = startOfWeek(today);
+  const monthStart = startOfMonth(today);
+
+  const [weekLeadsSnap, monthLeadsSnap, weekCostsSnap, monthCostsSnap] = await Promise.all([
+    db.collection(LEADS).where('createdAt', '>=', weekStart).get(),
+    db.collection(LEADS).where('createdAt', '>=', monthStart).get(),
+    db.collection(AD_COSTS).where(admin.firestore.FieldPath.documentId(), '>=', formatInTimeZone(weekStart, timeZone, 'yyyy-MM-dd')).get(),
+    db.collection(AD_COSTS).where(admin.firestore.FieldPath.documentId(), '>=', formatInTimeZone(monthStart, timeZone, 'yyyy-MM-dd')).get(),
+  ]);
+
+  const weekLeads = weekLeadsSnap.size;
+  const monthLeads = monthLeadsSnap.size;
+
+  let weekCost = 0;
+  weekCostsSnap.forEach(doc => {
+    weekCost += Object.values(doc.data()).reduce((s, v) => s + Number(v || 0), 0);
+  });
+
+  let monthCost = 0;
+  monthCostsSnap.forEach(doc => {
+    monthCost += Object.values(doc.data()).reduce((s, v) => s + Number(v || 0), 0);
+  });
+
+  const coreMetrics = {
+    cumulativeCostPerLead: 0, // 누적 비용은 추후 안정적인 방식으로 추가
+    thisWeekCostPerLead: weekLeads > 0 ? weekCost / weekLeads : 0,
+    thisMonthCostPerLead: monthLeads > 0 ? monthCost / monthLeads : 0,
+  };
+
+  return { roasData, trendData, coreMetrics };
+});
+
+// TikTok 광고비 가져오기 (예시 함수)
+async function fetchTiktokSpend(credentials, date) {
+  if (!credentials || !credentials.advertiserId) {
+    console.log("TikTok 인증 정보 또는 Advertiser ID가 없어 스킵합니다.");
+    return 0;
+  }
+
+  // 중요: TikTok은 Access Token을 주기적으로 재발급 받아야 합니다.
+  // 실제 운영 시에는 credentials.appId, credentials.secret 등을 사용하여
+  // Access Token을 발급받는 로직을 여기에 구현해야 합니다.
+  const accessToken = "여기에-실제-발급받은-Access-Token-을-입력하세요";
+
+  const startDate = formatInTimeZone(date, 'Asia/Seoul', 'yyyy-MM-dd');
+  const endDate = startDate;
+
+  try {
+    const response = await axios.get('https://business-api.tiktok.com/open_api/v1.3/report/integrated/get/', {
+      headers: { 'Access-Token': accessToken },
+      params: {
+        advertiser_id: credentials.advertiserId,
+        report_type: 'BASIC',
+        dimensions: ['stat_time_day'],
+        metrics: ['spend'],
+        start_date: startDate,
+        end_date: endDate,
+      }
+    });
+
+    if (response.data.code !== 0) {
+      console.error("TikTok API 오류:", response.data.message);
+      return 0;
+    }
+
+    const spend = response.data?.data?.list?.[0]?.metrics?.spend || 0;
+    return Number(spend);
+  } catch (error) {
+    console.error("TikTok 광고비 API 요청 실패:", error.response?.data || error.message);
+    return 0;
+  }
+}
+
+// Google Ads 광고비 가져오기 (예시 함수)
+async function fetchGoogleAdsSpend(credentials, date) {
+  // 실제 구현 시, GoogleAdsApi 클라이언트 초기화 및 인증 과정이 필요합니다.
+  // const client = new GoogleAdsApi({
+  //     client_id: credentials.clientId,
+  //     client_secret: credentials.clientSecret,
+  //     developer_token: credentials.developerToken,
+  // });
+  // const customer = client.Customer({
+  //     refresh_token: credentials.refreshToken,
+  //     login_customer_id: '로그인-계정-ID',
+  //     customer_id: '광고-계정-ID', 
+  // });
+
+  // GAQL 쿼리를 사용하여 특정 날짜의 광고비를 가져옵니다.
+  // const results = await customer.query(`
+  //     SELECT metrics.cost_micros 
+  //     FROM campaign 
+  //     WHERE segments.date = '${formatInTimeZone(date, 'Asia/Seoul', 'yyyy-MM-dd')}'
+  // `);
+
+  // const totalCostMicros = results.reduce((sum, row) => sum + row.metrics.cost_micros, 0);
+  // return totalCostMicros / 1000000; // Micros 단위를 일반 통화 단위로 변경
+  return 0; // 이 부분은 실제 연동 시 위 주석 코드로 대체됩니다.
+}
+
+
+exports.fetchAdCostsScheduled = onSchedule({ schedule: "every day 04:00", timeZone: "Asia/Seoul" }, async () => {
+  console.log("매일 광고비 자동 수집을 시작합니다.");
+
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const dateStr = formatInTimeZone(yesterday, 'Asia/Seoul', 'yyyy-MM-dd');
+
+  try {
+    const apiConfigDoc = await db.collection('_config').doc('api_credentials').get();
+    if (!apiConfigDoc.exists) {
+      console.log("API 인증 정보가 없어 스킵합니다.");
+      return null;
+    }
+    const apiConfig = apiConfigDoc.data();
+
+    // Google Ads Customer ID를 설정에서 가져오거나 직접 입력합니다.
+    const googleAdsCustomerId = apiConfig.google?.customerId || "730-978-8943"; // 예시 ID
+
+    // 각 API를 병렬로 호출하여 광고비 가져오기
+    const [tiktokCost, googleAdsCost] = await Promise.all([
+      fetchTiktokSpend(apiConfig.tiktok, yesterday),
+      fetchGoogleAdsSpend(apiConfig.google, googleAdsCustomerId, yesterday)
+    ]);
+
+    // Firestore 'ad_costs' 컬렉션에 저장하기
+    if (tiktokCost > 0 || googleAdsCost > 0) {
+      const docRef = db.collection(AD_COSTS).doc(dateStr);
+      await docRef.set({
+        tiktok: tiktokCost,
+        google: googleAdsCost,
+      }, { merge: true });
+      console.log(`${dateStr}의 광고비 수집 완료: TikTok: ${tiktokCost}, Google: ${googleAdsCost}`);
+    } else {
+      console.log(`${dateStr}에 수집된 광고비가 없습니다.`);
+    }
+
+  } catch (error) {
+    console.error("광고비 자동 수집 중 오류 발생:", error);
+  }
+
+  return null;
+});

@@ -85,3 +85,16 @@ export interface AdvancedStats {
   sources: string[];
   cumulativeBySource: { [key: string]: number };
 }
+
+export interface AdCost {
+  source: number;
+}
+
+export interface RoasData {
+  date: string;
+  source: string;
+  cost: number;
+  leads: number;
+  revenue: number;
+  roas: number;
+}

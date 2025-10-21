@@ -43,5 +43,11 @@ service cloud.firestore {
         allow create: if true;
         allow read, update, delete: if false;
     }
+
+    // ✨ [신규] 광고비 컬렉션 규칙
+    match /ad_costs/{date} {
+      allow read, write: if getMyRole() == 'super-admin';
+    }
+
   }
 }

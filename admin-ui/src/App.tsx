@@ -6,13 +6,26 @@ import { Routes, Route, Link, useNavigate, useLocation, Navigate } from "react-r
 
 import { App as AntApp, Layout, Button, Typography, Space, Card, Spin, ConfigProvider, Menu, Result } from "antd";
 import type { MenuProps } from "antd";
-import { GoogleOutlined, LogoutOutlined, DatabaseOutlined, UsergroupAddOutlined, MenuUnfoldOutlined, MenuFoldOutlined, DollarCircleOutlined, HistoryOutlined } from "@ant-design/icons";
+import {
+  GoogleOutlined,
+  LogoutOutlined,
+  DatabaseOutlined,
+  UsergroupAddOutlined,
+  MenuUnfoldOutlined,
+  MenuFoldOutlined,
+  DollarCircleOutlined,
+  HistoryOutlined,
+  LineChartOutlined,
+  SettingOutlined,
+} from "@ant-design/icons";
 import koKR from "antd/locale/ko_KR";
 
 import { LeadsPage } from "./pages/LeadsPage";
 import { AdminsPage } from "./pages/AdminsPage";
 import { SettlementPage } from "./pages/SettlementPage";
 import { HistoryPage } from "./pages/HistoryPage";
+import { RoasPage } from "./pages/RoasPage";
+import { ApiSettingsPage } from "./pages/ApiSettingsPage";
 
 const { Header, Content, Sider } = Layout;
 const { Title } = Typography;
@@ -130,6 +143,8 @@ const AppContent = () => {
   }
   if (myRole === "super-admin") {
     menuItems.push({ key: "history", icon: <HistoryOutlined />, label: <Link to='/history'>히스토리</Link> });
+    menuItems.push({ key: "roas", icon: <LineChartOutlined />, label: <Link to='/roas'>ROAS 분석</Link> });
+    menuItems.push({ key: "api-settings", icon: <SettingOutlined />, label: <Link to='/api-settings'>API 연동 설정</Link> });
   }
 
   return (
@@ -188,6 +203,14 @@ const AppContent = () => {
               }
             />
             <Route
+              path='/roas'
+              element={
+                <ProtectedRoute myRole={myRole} allowedRoles={["super-admin"]}>
+                  <RoasPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
               path='/unauthorized'
               element={
                 <Result
@@ -215,6 +238,14 @@ const AppContent = () => {
                     </Button>
                   }
                 />
+              }
+            />
+            <Route
+              path='/api-settings'
+              element={
+                <ProtectedRoute myRole={myRole} allowedRoles={["super-admin"]}>
+                  <ApiSettingsPage />
+                </ProtectedRoute>
               }
             />
           </Routes>

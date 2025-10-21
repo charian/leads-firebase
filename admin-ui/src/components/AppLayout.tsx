@@ -6,7 +6,7 @@ import { Link, useLocation, Outlet, useNavigate } from "react-router-dom";
 
 import { Layout, Button, Typography, Space, Menu } from "antd";
 import type { MenuProps } from "antd";
-import { LogoutOutlined, DatabaseOutlined, UsergroupAddOutlined, MenuUnfoldOutlined, MenuFoldOutlined, DollarCircleOutlined, HistoryOutlined } from "@ant-design/icons";
+import { LogoutOutlined, DatabaseOutlined, UsergroupAddOutlined, MenuUnfoldOutlined, MenuFoldOutlined, DollarCircleOutlined, HistoryOutlined, LineChartOutlined } from "@ant-design/icons";
 
 const { Header, Content, Sider } = Layout;
 const { Title } = Typography;
@@ -33,6 +33,7 @@ export const AppLayout = ({ myRole }: AppLayoutProps) => {
   }
   if (myRole === "super-admin") {
     menuItems.push({ key: "history", icon: <HistoryOutlined />, label: <Link to='/history'>히스토리</Link> });
+    menuItems.push({ key: "roas", icon: <LineChartOutlined />, label: <Link to='/roas'>ROAS 분석</Link> });
   }
 
   return (
