@@ -1,5 +1,3 @@
-// charian/leads-firebase/leads-firebase-055a667c5c853ad85aee2ec7f79d21492d3b2ea1/admin-ui/src/pages/RoasPage.tsx
-
 import { useState, useEffect } from "react";
 import { Card, Col, DatePicker, Row, Statistic, Table, Typography, InputNumber, message, Spin } from "antd";
 import type { TableProps } from "antd";
@@ -34,12 +32,24 @@ export const RoasPage = () => {
     try {
       if (dateRange) {
         const result: any = await getRoasData(dateRange[0].toDate(), dateRange[1].toDate());
-        setData(result.roasData || []);
-        setTrendData(result.trendData || []);
-        setCoreMetrics(result.coreMetrics || { cumulativeCostPerLead: 0, thisWeekCostPerLead: 0, thisMonthCostPerLead: 0 });
+
+        // ✅ [수정] 백엔드에서 null이 와도 앱이 멈추지 않도록 방어 코드 추가
+        if (result) {
+          setData(result.roasData || []);
+          setTrendData(result.trendData || []);
+          setCoreMetrics(result.coreMetrics || { cumulativeCostPerLead: 0, thisWeekCostPerLead: 0, thisMonthCostPerLead: 0 });
+        } else {
+          // result가 null이나 undefined일 경우, 빈 데이터로 설정
+          setData([]);
+          setTrendData([]);
+          throw new Error("서버에서 응답 데이터를 받지 못했습니다.");
+        }
       }
     } catch (e: any) {
+      // 이제 더 구체적인 오류 메시지가 표시됩니다.
       message.error(`데이터를 불러오는 데 실패했습니다: ${e.message}`);
+      setData([]);
+      setTrendData([]);
     } finally {
       setLoading(false);
     }
@@ -76,7 +86,6 @@ export const RoasPage = () => {
       dataIndex: "source",
       key: "source",
       filters: [...new Set(data.map((item) => item.source))].map((s) => ({ text: s, value: s })),
-      // 3. onFilter의 value 타입을 any로 지정하여 유연하게 처리합니다.
       onFilter: (value: any, record: RoasData) => record.source.indexOf(value) === 0,
     },
     {

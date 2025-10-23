@@ -1,53 +1,50 @@
 rules_version = '2';
+
 service cloud.firestore {
   match /databases/{db}/documents {
 
-    // --- Helper Function ---
+    // 헬퍼 함수: 현재 로그인한 사용자의 역할을 반환
     function getMyRole() {
-      return request.auth != null ? get(/databases/$(db)/documents/_config/admins).data.roles[request.auth.token.email] : null;
+      return request.auth != null ?
+        get(/databases/$(db)/documents/_config/admins).data.roles[request.auth.token.email] : null;
     }
 
-    // --- Leads Collection ---
+    // --- Leads 컬렉션 규칙 ---
     match /leads/{leadId} {
-      allow create: if request.resource.data.keys().hasAll(['name', 'phone_e164', 'createdAt']);
+      // 공개된 페이지에서 누구나 리드를 생성할 수 있도록 허용
+      allow create;
+      // 'user' 등급 이상의 모든 관리자가 리드를 읽고 수정할 수 있도록 허용
       allow read, update: if getMyRole() in ['super-admin', 'admin', 'user'];
+      // 'super-admin'만 리드를 삭제할 수 있도록 허용
       allow delete: if getMyRole() == 'super-admin';
     }
 
-    // --- Config Collection ---
+    // --- 설정(_config) 컬렉션 규칙 ---
+    match /_config/{docId} {
+       // 'admin' 등급 이상만 설정을 읽을 수 있도록 허용 (단, admins 문서는 예외)
+      allow read: if getMyRole() in ['super-admin', 'admin'];
+      // 'super-admin'만 설정을 수정할 수 있도록 허용
+      allow write: if getMyRole() == 'super-admin';
+    }
 
-    // 1. 운영자(admins) 문서 규칙
+    // `_config/admins` 문서에 대한 특별 규칙
     match /_config/admins {
-      // ✅ 핵심 수정: 모든 인증된 사용자가 자신의 역할을 확인하기 위해 읽을 수 있도록 허용합니다.
-      // 이렇게 해야 getMyRole() 함수가 모든 등급에서 정상적으로 동작합니다.
+       // ✅ [핵심 수정] 모든 인증된 사용자가 자신의 역할을 확인하기 위해 읽기 허용
       allow read: if request.auth != null;
-
-      // 쓰기: SUPER ADMIN만 가능 (운영자 추가/삭제)
+      // 'super-admin'만 운영자 목록을 수정할 수 있도록 허용
       allow write: if getMyRole() == 'super-admin';
     }
     
-    // 2. 기타 설정(settlement 등) 문서 규칙
-    match /_config/settlement {
-      allow read: if getMyRole() in ['super-admin', 'admin'];
-      allow write: if getMyRole() == 'super-admin';
-    }
-
-    // --- History Collection ---
+    // --- History 컬렉션 규칙 ---
     match /history/{docId} {
       allow read: if getMyRole() == 'super-admin';
-      allow write: if false;
+      allow write: if false; // 함수를 통해서만 쓰기 가능
     }
 
-    // --- Mail Collection ---
+    // --- Mail 컬렉션 규칙 (Firebase Extension용) ---
     match /mail/{docId} {
-        allow create: if true;
-        allow read, update, delete: if false;
+      allow create: if true; // 함수에서 메일을 보낼 수 있도록 허용
+      allow read, update, delete: if false;
     }
-
-    // ✨ [신규] 광고비 컬렉션 규칙
-    match /ad_costs/{date} {
-      allow read, write: if getMyRole() == 'super-admin';
-    }
-
   }
 }
