@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
-import { auth, googleProvider } from "./services/firebase";
-import { getMyRoleFromFirestore } from "./services/admins";
+import { auth, googleProvider, functions } from "./services/firebase"; // functions 임포트 추가
+import { httpsCallable } from "firebase/functions"; // httpsCallable 임포트 추가
 import { Routes, Route, Link, useNavigate, useLocation, Navigate } from "react-router-dom";
 
 import { App as AntApp, Layout, Button, Typography, Space, Card, Spin, ConfigProvider, Menu, Result } from "antd";
@@ -35,41 +35,35 @@ const useAuth = () => {
   const [me, setMe] = useState<string | null>(null);
   const [myRole, setMyRole] = useState<"super-admin" | "admin" | "user" | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
-  // ✨ 수정: 역할 로딩 상태를 추가합니다.
   const [roleLoading, setRoleLoading] = useState(true);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
-      // ✨ 수정: user 객체가 존재하고 email이 있는 경우에만 로직을 실행합니다.
       if (user && user.email) {
         setMe(user.email);
-        setRoleLoading(true); // ✨ 수정: 역할을 가져오기 시작할 때 로딩 상태를 true로 설정합니다.
+        setRoleLoading(true);
         try {
-          // Firebase의 emailVerified 속성을 사용하여 이메일이 인증되었는지 확인합니다.
-          if (user.emailVerified) {
-            const role = await getMyRoleFromFirestore(user.email);
-            setMyRole(role);
-          } else {
-            // 이메일이 인증되지 않았다면 역할을 null로 설정합니다.
-            setMyRole(null);
-          }
+          // Firestore 직접 접근 대신 getMyRole Cloud Function 호출
+          const getMyRole = httpsCallable(functions, "getMyRole");
+          const result = await getMyRole();
+          const { role } = result.data as { role: "super-admin" | "admin" | "user" | null };
+          setMyRole(role);
         } catch (e) {
           console.error("Failed to get user role:", e);
           setMyRole(null);
         } finally {
-          setRoleLoading(false); // ✨ 수정: 역할을 가져온 후 로딩 상태를 false로 설정합니다.
+          setRoleLoading(false);
         }
       } else {
         setMe(null);
         setMyRole(null);
-        setRoleLoading(false); // ✨ 수정: 로그인되지 않은 상태이므로 로딩 상태를 false로 설정합니다.
+        setRoleLoading(false);
       }
       setAuthLoading(false);
     });
     return unsub;
   }, []);
 
-  // ✨ 수정: 반환 값에 roleLoading을 추가합니다.
   return { me, myRole, authLoading, roleLoading };
 };
 
@@ -80,7 +74,6 @@ const ProtectedRoute = ({ children, allowedRoles, myRole }: { children: JSX.Elem
 
 // --- Main App Component ---
 const AppContent = () => {
-  // ✨ 수정: useAuth 훅에서 roleLoading을 가져옵니다.
   const { me, myRole, authLoading, roleLoading } = useAuth();
   const [collapsed, setCollapsed] = useState(false);
   const location = useLocation();
@@ -92,7 +85,6 @@ const AppContent = () => {
     navigate("/");
   };
 
-  // ✨ 수정: 초기 인증 로딩 중일 때 로딩 화면을 보여줍니다.
   if (authLoading) {
     return (
       <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "100vh" }}>
@@ -100,7 +92,7 @@ const AppContent = () => {
       </div>
     );
   }
-  // ✨ 수정: 로그인 상태가 아닐 때 로그인 페이지를 보여줍니다.
+
   if (!me) {
     return (
       <Layout style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -113,7 +105,7 @@ const AppContent = () => {
       </Layout>
     );
   }
-  // ✨ 수정: 역할 정보 로딩 중일 때 로딩 화면을 보여줍니다.
+
   if (roleLoading) {
     return (
       <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "100vh" }}>
@@ -121,7 +113,7 @@ const AppContent = () => {
       </div>
     );
   }
-  // ✨ 수정: 역할을 성공적으로 가져왔지만, 그 역할이 null일 때 (권한이 없을 때) '접근 불가' 화면을 보여줍니다.
+
   if (!myRole) {
     return (
       <Layout style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>

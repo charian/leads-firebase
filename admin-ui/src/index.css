@@ -233,7 +233,13 @@ body {
 .nowrap {
   white-space: nowrap;
 }
+.date-group-start td {
+  border-top: 2px solid #f0f0f0 !important;
+}
 
+.ant-table-row:hover .date-group-start td {
+  border-top-color: #d7d7d7 !important;
+}
 /* ===== Responsive ===== */
 @media (max-width: 1024px) {
   .toolbar {

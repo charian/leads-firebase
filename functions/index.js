@@ -10,7 +10,7 @@ const { BigQuery } = require("@google-cloud/bigquery");
 const geoip = require("geoip-lite");
 
 // 초기화
-setGlobalOptions({ region: "asia-northeast3", memory: "256MiB" });
+setGlobalOptions({ region: "asia-northeast3", memory: "512MiB" });
 admin.initializeApp();
 const db = getFirestore("customer-database");
 const bigquery = new BigQuery();
@@ -29,14 +29,14 @@ const MAIL_COLLECTION = "mail";
 const getAdminConfig = async () => {
   try {
     const adminDoc = await db.collection(CONFIG_COLLECTION).doc(ADMINS_DOC).get();
-    if (!adminDoc.exists()) {
+    if (!adminDoc.exists) {
       console.warn(`'${CONFIG_COLLECTION}/${ADMINS_DOC}' document not found!`);
       return { roles: {}, notifications: {} };
     }
     return adminDoc.data() || { roles: {}, notifications: {} };
   } catch (error) {
     console.error("Error fetching admin config:", error);
-    throw new HttpsError("internal", "관리자 설정 정보를 가져오는 중 오류가 발생했습니다.");
+    throw new HttpsError("unknown", "관리자 설정 정보를 가져오는 중 오류가 발생했습니다.", error);
   }
 };
 
@@ -46,12 +46,9 @@ const ensureIsRole = async (req, allowedRoles) => {
   const { roles } = await getAdminConfig();
   const normalizedEmail = email.trim().toLowerCase();
   let userRole = null;
-  for (const key in roles) {
-    if (key.trim().toLowerCase() === normalizedEmail) {
-      userRole = roles[key];
-      break;
-    }
-  }
+  const roleKey = Object.keys(roles || {}).find(key => key.trim().toLowerCase() === normalizedEmail);
+  userRole = roleKey ? roles[roleKey] : null;
+
   if (!userRole || !allowedRoles.includes(userRole)) {
     console.warn(`Permission denied for ${email}. Required role: ${allowedRoles.join(", ")}, but has role: ${userRole}`);
     throw new HttpsError("permission-denied", "이 작업을 수행할 권한이 없습니다.");
@@ -90,27 +87,40 @@ function formatPhoneNumber(phone) {
 }
 
 // Callable Functions
-exports.getMyRole = onCall({ invoker: 'public' }, async (req) => {
+exports.getMyRole = onCall(async (req) => {
   const email = req.auth?.token?.email;
-  if (!email) return { email: null, role: null };
+  if (!email) {
+    console.log("getMyRole Diagnosis: No email found in auth token.");
+    return { email: null, role: null };
+  }
+  console.log(`getMyRole Diagnosis: Auth token email is "${email}".`);
+
   try {
-    const { roles } = await getAdminConfig();
-    const normalizedEmail = email.trim().toLowerCase();
-    let role = null;
-    for (const key in roles) {
-      if (key.trim().toLowerCase() === normalizedEmail) {
-        role = roles[key];
-        break;
-      }
+    const config = await getAdminConfig();
+    const roles = config ? config.roles : undefined;
+
+    console.log(`getMyRole Diagnosis: Fetched roles object: ${JSON.stringify(roles)}`);
+
+    if (!roles || typeof roles !== 'object' || Array.isArray(roles)) {
+      console.log("getMyRole Diagnosis: The 'roles' field is missing, not an object, or is an array.");
+      return { email, role: null };
     }
+
+    const normalizedEmail = email.trim().toLowerCase();
+
+    const roleKey = Object.keys(roles).find(key => typeof key === 'string' && key.trim().toLowerCase() === normalizedEmail);
+    const role = roleKey ? roles[roleKey] : null;
+
+    console.log(`getMyRole Diagnosis: For email "${normalizedEmail}", found matching key "${roleKey || 'undefined'}" with role "${role || 'null'}".`);
+
     return { email, role };
   } catch (error) {
-    console.error("Error in getMyRole:", error);
-    throw new HttpsError("internal", "역할 정보를 가져오는 중 오류가 발생했습니다.");
+    console.error("!!! Critical Error in getMyRole:", error);
+    throw new HttpsError("unknown", "역할 정보를 가져오는 중 서버에서 오류가 발생했습니다.", { originalError: error.message });
   }
 });
 
-exports.getAdmins = onCall({ invoker: 'public' }, async (req) => {
+exports.getAdmins = onCall(async (req) => {
   await ensureIsRole(req, ['super-admin', 'admin']);
   try {
     const { roles, notifications } = await getAdminConfig();
@@ -126,11 +136,11 @@ exports.getAdmins = onCall({ invoker: 'public' }, async (req) => {
     });
   } catch (error) {
     console.error("Error in getAdmins:", error);
-    throw new HttpsError("internal", "관리자 목록을 불러오는 데 실패했습니다.");
+    throw new HttpsError("unknown", "관리자 목록을 불러오는 데 실패했습니다.", error);
   }
 });
 
-exports.addAdmin = onCall({ invoker: 'public' }, async (req) => {
+exports.addAdmin = onCall(async (req) => {
   await ensureIsRole(req, ['super-admin']);
   const { email, role } = req.data;
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !['admin', 'user'].includes(role)) {
@@ -142,11 +152,11 @@ exports.addAdmin = onCall({ invoker: 'public' }, async (req) => {
     return { ok: true };
   } catch (error) {
     console.error("Error in addAdmin:", error);
-    throw new HttpsError("internal", "관리자 추가에 실패했습니다.");
+    throw new HttpsError("unknown", "관리자 추가에 실패했습니다.", error);
   }
 });
 
-exports.updateAdminRole = onCall({ invoker: 'public' }, async (req) => {
+exports.updateAdminRole = onCall(async (req) => {
   await ensureIsRole(req, ['super-admin']);
   const { email, role } = req.data;
   if (!email || !['admin', 'user', 'super-admin'].includes(role)) throw new HttpsError('invalid-argument', '올바른 이메일과 역할을 입력해주세요.');
@@ -156,11 +166,11 @@ exports.updateAdminRole = onCall({ invoker: 'public' }, async (req) => {
     return { ok: true };
   } catch (error) {
     console.error("Error in updateAdminRole:", error);
-    throw new HttpsError("internal", "역할 변경에 실패했습니다.");
+    throw new HttpsError("unknown", "역할 변경에 실패했습니다.", error);
   }
 });
 
-exports.updateAdminNotifications = onCall({ invoker: 'public' }, async (req) => {
+exports.updateAdminNotifications = onCall(async (req) => {
   await ensureIsRole(req, ['super-admin']);
   const { email, field, value } = req.data;
   if (!email || !['notifyOnNewLead', 'notifyOnDailySummary'].includes(field) || typeof value !== 'boolean') throw new HttpsError('invalid-argument', '올바른 이메일, 필드, 값을 입력해주세요.');
@@ -171,11 +181,11 @@ exports.updateAdminNotifications = onCall({ invoker: 'public' }, async (req) => 
     return { ok: true };
   } catch (error) {
     console.error("Error in updateAdminNotifications:", error);
-    throw new HttpsError("internal", "알림 설정 변경에 실패했습니다.");
+    throw new HttpsError("unknown", "알림 설정 변경에 실패했습니다.", error);
   }
 });
 
-exports.removeAdmin = onCall({ invoker: 'public' }, async (req) => {
+exports.removeAdmin = onCall(async (req) => {
   await ensureIsRole(req, ['super-admin']);
   const { email } = req.data;
   if (!email) throw new HttpsError('invalid-argument', '이메일이 필요합니다.');
@@ -188,11 +198,11 @@ exports.removeAdmin = onCall({ invoker: 'public' }, async (req) => {
     return { ok: true };
   } catch (error) {
     console.error("Error in removeAdmin:", error);
-    throw new HttpsError("internal", "관리자 삭제에 실패했습니다.");
+    throw new HttpsError("unknown", "관리자 삭제에 실패했습니다.", error);
   }
 });
 
-exports.createLeadCall = onCall({ invoker: "public" }, async (req) => {
+exports.createLeadCall = onCall(async (req) => {
   const { name, phone, region, referrer, ...restData } = req.data || {};
   if (!name || !phone || !region) throw new HttpsError("invalid-argument", "이름, 전화번호, 지역은 필수 항목입니다.");
   const phoneDigits = String(phone).replace(/\D/g, "");
@@ -215,11 +225,11 @@ exports.createLeadCall = onCall({ invoker: "public" }, async (req) => {
   } catch (error) {
     if (error instanceof HttpsError) throw error;
     console.error("Error in createLeadCall:", error);
-    throw new HttpsError("internal", "리드 생성 중 오류가 발생했습니다.");
+    throw new HttpsError("unknown", "리드 생성 중 오류가 발생했습니다.", error);
   }
 });
 
-exports.deleteLeads = onCall({ invoker: 'public' }, async (req) => {
+exports.deleteLeads = onCall(async (req) => {
   const { email } = await ensureIsRole(req, ['super-admin', 'admin', 'user']);
   const { ids } = req.data;
   if (!Array.isArray(ids) || ids.length === 0) throw new HttpsError("invalid-argument", "삭제할 리드의 ID 배열이 필요합니다.");
@@ -231,11 +241,11 @@ exports.deleteLeads = onCall({ invoker: 'public' }, async (req) => {
     return { deleted: ids.length };
   } catch (error) {
     console.error("Error in deleteLeads:", error);
-    throw new HttpsError("internal", "리드 삭제 중 오류가 발생했습니다.");
+    throw new HttpsError("unknown", "리드 삭제 중 오류가 발생했습니다.", error);
   }
 });
 
-exports.incrementDownloads = onCall({ invoker: 'public' }, async (req) => {
+exports.incrementDownloads = onCall(async (req) => {
   const { email } = await ensureIsRole(req, ['super-admin', 'admin', 'user']);
   const { ids } = req.data;
   if (!Array.isArray(ids) || ids.length === 0) throw new HttpsError("invalid-argument", "다운로드할 리드의 ID 배열이 필요합니다.");
@@ -250,11 +260,11 @@ exports.incrementDownloads = onCall({ invoker: 'public' }, async (req) => {
     return { updated: ids.length };
   } catch (error) {
     console.error("Error in incrementDownloads:", error);
-    throw new HttpsError("internal", "다운로드 횟수 업데이트 중 오류가 발생했습니다.");
+    throw new HttpsError("unknown", "다운로드 횟수 업데이트 중 오류가 발생했습니다.", error);
   }
 });
 
-exports.updateMemoAndLog = onCall({ invoker: 'public' }, async (req) => {
+exports.updateMemoAndLog = onCall(async (req) => {
   const { email } = await ensureIsRole(req, ['super-admin', 'admin', 'user']);
   const { leadId, memo, oldMemo } = req.data;
   if (!leadId) throw new HttpsError('invalid-argument', '리드 ID가 필요합니다.');
@@ -264,11 +274,11 @@ exports.updateMemoAndLog = onCall({ invoker: 'public' }, async (req) => {
     return { ok: true };
   } catch (error) {
     console.error("Error in updateMemoAndLog:", error);
-    throw new HttpsError("internal", "메모 업데이트 중 오류가 발생했습니다.");
+    throw new HttpsError("unknown", "메모 업데이트 중 오류가 발생했습니다.", error);
   }
 });
 
-exports.setLeadStatus = onCall({ invoker: 'public' }, async (req) => {
+exports.setLeadStatus = onCall(async (req) => {
   const { email } = await ensureIsRole(req, ['super-admin', 'admin', 'user']);
   const { leadId, field, status } = req.data;
   const allowedFields = ['isBad', 'visited', 'procedure'];
@@ -279,22 +289,22 @@ exports.setLeadStatus = onCall({ invoker: 'public' }, async (req) => {
     return { ok: true };
   } catch (error) {
     console.error("Error in setLeadStatus:", error);
-    throw new HttpsError("internal", "리드 상태 변경 중 오류가 발생했습니다.");
+    throw new HttpsError("unknown", "리드 상태 변경 중 오류가 발생했습니다.", error);
   }
 });
 
-exports.getSettlementConfig = onCall({ invoker: 'public' }, async (req) => {
+exports.getSettlementConfig = onCall(async (req) => {
   await ensureIsRole(req, ['super-admin', 'admin']);
   try {
     const doc = await db.collection(CONFIG_COLLECTION).doc(SETTLEMENT_DOC).get();
-    return doc.exists() ? doc.data() : { costs: {} };
+    return doc.exists ? doc.data() : { costs: {} };
   } catch (error) {
     console.error("Error in getSettlementConfig:", error);
-    throw new HttpsError("internal", "정산 설정을 불러오는 데 실패했습니다.");
+    throw new HttpsError("unknown", "정산 설정을 불러오는 데 실패했습니다.", error);
   }
 });
 
-exports.setSettlementCost = onCall({ invoker: 'public' }, async (req) => {
+exports.setSettlementCost = onCall(async (req) => {
   await ensureIsRole(req, ['super-admin']);
   const { year, cost } = req.data;
   if (!year || typeof cost !== 'number' || cost < 0) throw new HttpsError('invalid-argument', '올바른 연도와 비용을 입력해주세요.');
@@ -303,11 +313,11 @@ exports.setSettlementCost = onCall({ invoker: 'public' }, async (req) => {
     return { ok: true };
   } catch (error) {
     console.error("Error in setSettlementCost:", error);
-    throw new HttpsError("internal", "비용 설정 저장에 실패했습니다.");
+    throw new HttpsError("unknown", "비용 설정 저장에 실패했습니다.", error);
   }
 });
 
-exports.calculateSettlement = onCall({ invoker: 'public' }, async (req) => {
+exports.calculateSettlement = onCall(async (req) => {
   await ensureIsRole(req, ['super-admin', 'admin']);
   const { startDate, endDate } = req.data;
   if (!startDate || !endDate || isNaN(new Date(startDate)) || isNaN(new Date(endDate))) throw new HttpsError('invalid-argument', '유효한 시작일과 종료일이 필요합니다.');
@@ -316,7 +326,7 @@ exports.calculateSettlement = onCall({ invoker: 'public' }, async (req) => {
     const end = new Date(endDate);
     const leadsSnap = await db.collection(LEADS_COLLECTION).where('downloadedAt', '>=', start).where('downloadedAt', '<=', end).get();
     const settlementDoc = await db.collection(CONFIG_COLLECTION).doc(SETTLEMENT_DOC).get();
-    const costs = settlementDoc.exists() ? settlementDoc.data().costs : {};
+    const costs = settlementDoc.exists ? settlementDoc.data().costs : {};
     const dailyData = {};
     leadsSnap.docs.forEach(doc => {
       const lead = doc.data();
@@ -332,11 +342,11 @@ exports.calculateSettlement = onCall({ invoker: 'public' }, async (req) => {
     return { dailyData: Object.values(dailyData), costPerLead };
   } catch (error) {
     console.error("Error in calculateSettlement:", error);
-    throw new HttpsError("internal", "정산 데이터 계산 중 오류가 발생했습니다.");
+    throw new HttpsError("unknown", "정산 데이터 계산 중 오류가 발생했습니다.", error);
   }
 });
 
-exports.getHistory = onCall({ invoker: "public" }, async (req) => {
+exports.getHistory = onCall(async (req) => {
   await ensureIsRole(req, ["super-admin"]);
   const { limit = 100 } = req.data;
   if (typeof limit !== 'number' || limit <= 0 || limit > 500) throw new HttpsError('invalid-argument', 'limit은 1과 500 사이의 숫자여야 합니다.');
@@ -345,11 +355,11 @@ exports.getHistory = onCall({ invoker: "public" }, async (req) => {
     return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
   } catch (error) {
     console.error("Error in getHistory:", error);
-    throw new HttpsError("internal", "히스토리 조회 중 오류가 발생했습니다.");
+    throw new HttpsError("unknown", "히스토리 조회 중 오류가 발생했습니다.", error);
   }
 });
 
-exports.getAdvancedDashboardStats = onCall({ invoker: 'public' }, async (req) => {
+exports.getAdvancedDashboardStats = onCall(async (req) => {
   await ensureIsRole(req, ['super-admin', 'admin', 'user']);
   try {
     const timeZone = "Asia/Seoul";
@@ -397,11 +407,11 @@ exports.getAdvancedDashboardStats = onCall({ invoker: 'public' }, async (req) =>
     };
   } catch (error) {
     console.error("Error in getAdvancedDashboardStats:", error);
-    throw new HttpsError("internal", "대시보드 통계 데이터 조회 중 오류가 발생했습니다.");
+    throw new HttpsError("unknown", "대시보드 통계 데이터 조회 중 오류가 발생했습니다.", error);
   }
 });
 
-exports.setAdCost = onCall({ invoker: 'public' }, async (req) => {
+exports.setAdCost = onCall(async (req) => {
   await ensureIsRole(req, ['super-admin']);
   const { date, source, cost } = req.data;
   if (!date || !source || typeof cost !== 'number' || cost < 0) throw new HttpsError('invalid-argument', '날짜, 매체, 그리고 0 이상의 광고비(숫자)를 입력해주세요.');
@@ -410,7 +420,7 @@ exports.setAdCost = onCall({ invoker: 'public' }, async (req) => {
     return { ok: true };
   } catch (error) {
     console.error("Error in setAdCost:", error);
-    throw new HttpsError("internal", "광고비 저장에 실패했습니다.");
+    throw new HttpsError("unknown", "광고비 저장에 실패했습니다.", error);
   }
 });
 
@@ -422,19 +432,36 @@ exports.getRoasData = onCall(highMemoryOptions, async (req) => {
   if (!startDate || !endDate || isNaN(new Date(startDate)) || isNaN(new Date(endDate))) {
     throw new HttpsError('invalid-argument', '유효한 시작일과 종료일이 필요합니다.');
   }
+
   try {
     const start = new Date(startDate);
     const end = new Date(endDate);
     const timeZone = 'Asia/Seoul';
-    const [leadsSnap, adCostsSnap, settlementDoc] = await Promise.all([
+    const today = new Date();
+    const trendStartDate = subDays(today, 29);
+
+    const [
+      leadsInDateRangeSnap,
+      allLeadsSnap,
+      adCostsSnap,
+      settlementDoc,
+      leadsInTrendRangeSnap // ✨ 추가: 트렌드 기간 동안의 리드 데이터
+    ] = await Promise.all([
       db.collection(LEADS_COLLECTION).where('createdAt', '>=', start).where('createdAt', '<=', end).get(),
+      db.collection(LEADS_COLLECTION).get(),
       db.collection(AD_COSTS_COLLECTION).get(),
-      db.collection(CONFIG_COLLECTION).doc(SETTLEMENT_DOC).get()
+      db.collection(CONFIG_COLLECTION).doc(SETTLEMENT_DOC).get(),
+      db.collection(LEADS_COLLECTION).where('createdAt', '>=', trendStartDate).get()
     ]);
-    const costsConfig = settlementDoc.exists() ? settlementDoc.data().costs : {};
+
+    const costsConfig = settlementDoc.exists ? settlementDoc.data().costs : {};
+
     const combinedData = {};
     const allSourcesInPeriod = new Set();
-    leadsSnap.docs.forEach(doc => {
+    const adSpendBySource = {};
+    const leadsBySource = {};
+
+    leadsInDateRangeSnap.docs.forEach(doc => {
       const lead = doc.data();
       if (!lead.createdAt) return;
       const dateStr = formatInTimeZone(lead.createdAt.toDate(), timeZone, 'yyyy-MM-dd');
@@ -445,21 +472,28 @@ exports.getRoasData = onCall(highMemoryOptions, async (req) => {
       const year = String(lead.createdAt.toDate().getFullYear());
       combinedData[key].leads++;
       combinedData[key].revenue += costsConfig[year] || 0;
+
+      leadsBySource[source] = (leadsBySource[source] || 0) + 1;
     });
+
     const startDateStr = formatInTimeZone(start, timeZone, 'yyyy-MM-dd');
     const endDateStr = formatInTimeZone(end, timeZone, 'yyyy-MM-dd');
+
     adCostsSnap.docs.forEach(doc => {
       const dateStr = doc.id;
+      const costs = doc.data();
       if (dateStr >= startDateStr && dateStr <= endDateStr) {
-        const costs = doc.data();
         for (const source in costs) {
           allSourcesInPeriod.add(source);
           const key = `${dateStr}|${source}`;
           if (!combinedData[key]) combinedData[key] = { leads: 0, revenue: 0, cost: 0 };
-          combinedData[key].cost += Number(costs[source] || 0);
+          const costValue = Number(costs[source] || 0);
+          combinedData[key].cost += costValue;
+          adSpendBySource[source] = (adSpendBySource[source] || 0) + costValue;
         }
       }
     });
+
     const roasData = [];
     if (allSourcesInPeriod.size === 0) allSourcesInPeriod.add("N/A");
     for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
@@ -469,23 +503,68 @@ exports.getRoasData = onCall(highMemoryOptions, async (req) => {
         roasData.push({ date: dateStr, source, cost: data.cost || 0, leads: data.leads || 0, revenue: data.revenue || 0, roas: (data.cost > 0) ? (data.revenue / data.cost) * 100 : 0 });
       });
     }
-    const today = new Date();
-    const trendStartDate = subDays(today, 29);
-    const trendCostsSnap = await db.collection(AD_COSTS_COLLECTION)
-      .where(admin.firestore.FieldPath.documentId(), '>=', formatInTimeZone(trendStartDate, timeZone, 'yyyy-MM-dd'))
-      .where(admin.firestore.FieldPath.documentId(), '<=', formatInTimeZone(today, timeZone, 'yyyy-MM-dd'))
-      .get();
-    const trendCosts = {};
-    trendCostsSnap.forEach(doc => {
-      trendCosts[doc.id] = Object.values(doc.data()).reduce((sum, val) => sum + Number(val || 0), 0);
+
+    const trendStartDateStr = formatInTimeZone(trendStartDate, timeZone, 'yyyy-MM-dd');
+    const todayStr = formatInTimeZone(today, timeZone, 'yyyy-MM-dd');
+
+    const allTrendSources = new Set();
+    const dailyCostsBySource = {};
+    const dailyLeadCounts = {}; // ✨ 추가: 일별 리드 카운트
+
+    adCostsSnap.docs.forEach(doc => {
+      const dateStr = doc.id;
+      if (dateStr >= trendStartDateStr && dateStr <= todayStr) {
+        const costs = doc.data();
+        dailyCostsBySource[dateStr] = dailyCostsBySource[dateStr] || {};
+        for (const source in costs) {
+          allTrendSources.add(source);
+          dailyCostsBySource[dateStr][source] = (dailyCostsBySource[dateStr][source] || 0) + Number(costs[source] || 0);
+        }
+      }
     });
+
+    leadsInTrendRangeSnap.docs.forEach(doc => {
+      const lead = doc.data();
+      if (lead.createdAt) {
+        const dateStr = formatInTimeZone(lead.createdAt.toDate(), timeZone, 'yyyy-MM-dd');
+        dailyLeadCounts[dateStr] = (dailyLeadCounts[dateStr] || 0) + 1;
+      }
+    });
+
     const trendData = Array.from({ length: 30 }).map((_, i) => {
       const date = subDays(today, 29 - i);
       const dateStr = formatInTimeZone(date, timeZone, 'yyyy-MM-dd');
-      return { date: dateStr, cost: trendCosts[dateStr] || 0 };
+      const dailyCosts = dailyCostsBySource[dateStr] || {};
+      const totalDailyCost = Object.values(dailyCosts).reduce((sum, val) => sum + val, 0);
+      const totalDailyLeads = dailyLeadCounts[dateStr] || 0;
+
+      const entry = { date: dateStr };
+      allTrendSources.forEach(source => {
+        entry[source] = dailyCosts[source] || 0;
+      });
+      // ✨ 추가: 리드당 비용 계산
+      entry.costPerLead = totalDailyLeads > 0 ? totalDailyCost / totalDailyLeads : 0;
+
+      return entry;
     });
+
+    const totalLeadsCount = allLeadsSnap.size;
+    let totalAdCost = 0;
+    adCostsSnap.forEach(doc => {
+      const costs = doc.data();
+      totalAdCost += Object.values(costs).reduce((sum, val) => sum + Number(val || 0), 0);
+    });
+
+    const costPerLeadBySource = {};
+    for (const source in adSpendBySource) {
+      const spend = adSpendBySource[source];
+      const leads = leadsBySource[source] || 0;
+      costPerLeadBySource[source] = leads > 0 ? spend / leads : 0;
+    }
+
     const weekStart = startOfWeek(today);
     const monthStart = startOfMonth(today);
+
     const [weekLeadsSnap, monthLeadsSnap, weekCostsSnap, monthCostsSnap] = await Promise.all([
       db.collection(LEADS_COLLECTION).where('createdAt', '>=', weekStart).count().get(),
       db.collection(LEADS_COLLECTION).where('createdAt', '>=', monthStart).count().get(),
@@ -496,14 +575,25 @@ exports.getRoasData = onCall(highMemoryOptions, async (req) => {
     const monthLeads = monthLeadsSnap.data().count;
     const weekCost = weekCostsSnap.docs.reduce((sum, doc) => sum + Object.values(doc.data()).reduce((s, v) => s + Number(v || 0), 0), 0);
     const monthCost = monthCostsSnap.docs.reduce((sum, doc) => sum + Object.values(doc.data()).reduce((s, v) => s + Number(v || 0), 0), 0);
+
     const coreMetrics = {
+      cumulativeCostPerLead: totalLeadsCount > 0 ? totalAdCost / totalLeadsCount : 0,
       thisWeekCostPerLead: weekLeads > 0 ? weekCost / weekLeads : 0,
       thisMonthCostPerLead: monthLeads > 0 ? monthCost / monthLeads : 0,
+      costPerLeadBySource,
+      adSpendBySource,
+      leadsBySource,
     };
-    return { roasData, trendData, coreMetrics };
+
+    return {
+      roasData,
+      trendData,
+      trendSources: Array.from(allTrendSources),
+      coreMetrics
+    };
   } catch (error) {
     console.error("Error in getRoasData:", error);
-    throw new HttpsError("internal", "ROAS 데이터 조회 중 오류가 발생했습니다.");
+    throw new HttpsError("unknown", "ROAS 데이터 조회 중 오류가 발생했습니다.", error);
   }
 });
 
@@ -587,7 +677,7 @@ exports.fetchAdCostsScheduled = onSchedule({ schedule: "every day 04:00", timeZo
   const dateStr = formatInTimeZone(yesterday, 'Asia/Seoul', 'yyyy-MM-dd');
   try {
     const apiConfigDoc = await db.collection(CONFIG_COLLECTION).doc(API_CREDENTIALS_DOC).get();
-    if (!apiConfigDoc.exists()) {
+    if (!apiConfigDoc.exists) {
       console.log("API credentials not found, skipping.");
       return;
     }
@@ -604,30 +694,30 @@ exports.fetchAdCostsScheduled = onSchedule({ schedule: "every day 04:00", timeZo
   }
 });
 
-exports.getApiSettings = onCall({ invoker: 'public' }, async (req) => {
+exports.getApiSettings = onCall(async (req) => {
   await ensureIsRole(req, ['super-admin']);
   try {
     const doc = await db.collection(CONFIG_COLLECTION).doc(API_CREDENTIALS_DOC).get();
-    if (!doc.exists()) return {};
+    if (!doc.exists) return {};
     const settings = doc.data();
     if (settings.google) delete settings.google.clientSecret;
     if (settings.tiktok) delete settings.tiktok.secret;
     return settings;
   } catch (error) {
     console.error("Error in getApiSettings:", error);
-    throw new HttpsError("internal", "API 설정 정보를 불러오는 데 실패했습니다.");
+    throw new HttpsError("unknown", "API 설정 정보를 불러오는 데 실패했습니다.", error);
   }
 });
 
-exports.saveApiSettings = onCall({ invoker: 'public' }, async (req) => {
+exports.saveApiSettings = onCall(async (req) => {
   await ensureIsRole(req, ['super-admin']);
-  const { settings } = req.data;
+  const settings = req.data;
   if (!settings || (!settings.tiktok && !settings.google)) throw new HttpsError('invalid-argument', '저장할 API 설정 정보가 없습니다.');
   try {
     await db.collection(CONFIG_COLLECTION).doc(API_CREDENTIALS_DOC).set(settings, { merge: true });
     return { ok: true };
   } catch (error) {
     console.error("Error in saveApiSettings:", error);
-    throw new HttpsError("internal", "API 설정 정보 저장에 실패했습니다.");
+    throw new HttpsError("unknown", "API 설정 정보 저장에 실패했습니다.", error);
   }
 });

@@ -1,5 +1,3 @@
-// charian/leads-firebase/leads-firebase-406454682e97bd77272c4f2bfb7458eafbb2216c/admin-ui/src/types.ts
-
 import type { Dayjs } from "dayjs";
 import type { Timestamp } from "firebase/firestore";
 
@@ -15,21 +13,15 @@ export interface Lead {
   downloadedBy?: string;
   isBad: boolean;
   memo: string;
-
-  // ✨ 추가: 내원 및 시술 여부 필드
   visited?: boolean;
   procedure?: boolean;
-
   utm_source?: string;
   utm_medium?: string;
   utm_campaign?: string;
   referrer?: string;
   ga_client_id?: string;
-
-  // ✨ 추가: IP 및 도시 정보 필드
   ipAddress?: string;
   ipCity?: string;
-
   [key: string]: any;
 }
 
@@ -86,10 +78,6 @@ export interface AdvancedStats {
   cumulativeBySource: { [key: string]: number };
 }
 
-export interface AdCost {
-  source: number;
-}
-
 export interface RoasData {
   date: string;
   source: string;
@@ -97,4 +85,21 @@ export interface RoasData {
   leads: number;
   revenue: number;
   roas: number;
+}
+
+// ROAS 페이지를 위한 타입들
+export interface CoreMetrics {
+  cumulativeCostPerLead: number;
+  thisWeekCostPerLead: number;
+  thisMonthCostPerLead: number;
+  costPerLeadBySource: { [key: string]: number };
+  adSpendBySource: { [key: string]: number };
+  leadsBySource: { [key: string]: number }; // ✨ 추가
+}
+
+export interface RoasPageData {
+  roasData: RoasData[];
+  trendData: TrendDataPoint[];
+  trendSources: string[];
+  coreMetrics: CoreMetrics;
 }
